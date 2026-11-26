@@ -1,0 +1,40 @@
+// Writing4j: from the basket of sources to the book. Depends on Knowledge4j only.
+allprojects {
+    group = 'com.aresstack'
+    version = (findProperty('releaseVersion') ?: '0.1.0-SNAPSHOT').toString()
+    repositories {
+        mavenCentral()
+    }
+}
+
+ext.knowledge4jVersion = '0.1.0-SNAPSHOT'
+ext.gsonVersion = '2.14.0'
+ext.junitVersion = '5.11.4'
+
+subprojects {
+    apply plugin: 'java-library'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+        withSourcesJar()
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
+
+    dependencies {
+        testImplementation platform("org.junit:junit-bom:${rootProject.junitVersion}")
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'junit:junit:4.13.2'
+        testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    tasks.named('test', Test) {
+        useJUnitPlatform()
+    }
+}
