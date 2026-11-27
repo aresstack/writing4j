@@ -169,10 +169,10 @@ public final class StockQuestions {
     /** Tokens of the fixed parts of a prompt besides the fence and the material (instructions). */
     private static final int FIXED_PROMPT_TOKENS = 600;
 
-    static final String MISSION_SYSTEM_DE = "Du planst ein Sachbuch: Du sagst, welche Sachfragen das Buch nach seinem "
-            + "Auftrag beantworten muss. Antworte nur mit JSON.";
-    static final String MISSION_SYSTEM_EN = "You plan a non-fiction book: you say which questions of fact the book must "
-            + "answer by its mission. Answer only with JSON.";
+    static final String MISSION_SYSTEM_DE = "Du planst ein Sachbuch: Du sagst, welche Fragen das Buch nach seinem "
+            + "Auftrag beantworten muss, Sachfragen ebenso wie kritische und bewertende. Antworte nur mit JSON.";
+    static final String MISSION_SYSTEM_EN = "You plan a non-fiction book: you say which questions the book must answer "
+            + "by its mission, questions of fact as well as critical and evaluative ones. Answer only with JSON.";
     static final String CHECK_SYSTEM_DE = "Du prüfst Fragen eines Sachbuchs gegen den Buchauftrag und seinen "
             + "Weidezaun. Antworte nur mit JSON.";
     static final String CHECK_SYSTEM_EN = "You check questions of a non-fiction book against the book's mission and "
@@ -235,20 +235,25 @@ public final class StockQuestions {
     String missionPrompt() {
         StringBuilder text = new StringBuilder(fence.describe(german, MISSION_CHARS));
         if (german) {
-            text.append("Welche Sachfragen muss dieses Buch nach seinem Auftrag beantworten?\n"
-                    + "- Jede Frage ist ein vollständiger Fragesatz und fragt nach Tatsachen, die sich mit Quellen "
-                    + "belegen lassen.\n"
+            text.append("Welche Fragen muss dieses Buch nach seinem Auftrag beantworten?\n"
+                    + "- Jede Frage ist ein vollständiger Fragesatz, der sich mit Quellen beantworten lässt.\n"
+                    + "- Neben den Sachfragen gehören kritische und bewertende Fragen dazu, die der Auftrag aufwirft: "
+                    + "Vor- und Nachteile, Risiken, Grenzen, Streitpunkte, Kritik, Abwägungen. Auch sie werden mit "
+                    + "Quellen beantwortet, nicht mit der Meinung des Autors.\n"
                     + "- Jede Frage bleibt innerhalb von Rand, Ausschlüssen, räumlichem und zeitlichem Rahmen.\n"
                     + "- Zusammen decken die Fragen alles ab, was der Auftrag verlangt; keine Frage zum Aufbau des "
-                    + "Buchs, keine Meinungsfrage, keine Frage zweimal.\n"
+                    + "Buchs, keine Frage zweimal.\n"
                     + "Antworte nur mit JSON: \"titel\" (ein kurzer Arbeitstitel des Buchs) und \"fragen\" (Liste "
                     + "der Fragen).");
         } else {
-            text.append("Which questions of fact must this book answer by its mission?\n"
-                    + "- Every question is a complete question and asks for facts that sources can support.\n"
+            text.append("Which questions must this book answer by its mission?\n"
+                    + "- Every question is a complete question that sources can answer.\n"
+                    + "- Besides the questions of fact, the critical and evaluative questions the mission raises "
+                    + "belong to them: advantages and drawbacks, risks, limits, disputes, criticism, trade-offs. They "
+                    + "too are answered from sources, not from the author's opinion.\n"
                     + "- Every question stays within the edge, the exclusions, place and time.\n"
                     + "- Together the questions cover everything the mission demands; no question about the "
-                    + "structure of the book, none of opinion, no question twice.\n"
+                    + "structure of the book, no question twice.\n"
                     + "Answer only with JSON: \"titel\" (a short working title of the book) and \"fragen\" (the list "
                     + "of questions).");
         }

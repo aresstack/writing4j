@@ -32,6 +32,9 @@ public class StockQuestionsTest {
         assertTrue(chat.systems.get(0).startsWith("Du planst ein Sachbuch"));
         assertTrue(chat.prompts.get(0).contains("Rand des Themas:\nNur der Verkehr in der Stadt."));
         assertTrue(chat.prompts.get(0).contains("Zusammen decken die Fragen alles ab, was der Auftrag verlangt"));
+        assertTrue("critical and evaluative questions come from the mission (M24)", chat.prompts.get(0).contains(
+                "kritische und bewertende Fragen dazu, die der Auftrag aufwirft"));
+        assertTrue(chat.prompts.get(0).contains("nicht mit der Meinung des Autors"));
     }
 
     @Test
