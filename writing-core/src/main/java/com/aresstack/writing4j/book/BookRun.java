@@ -51,9 +51,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
- * Phase 4, from the basket to the book . The input is the book idea (mission and
- * Weidezaun, {@link Fence}), the basket ({@link SourceBasket}, references with a {@link BasketReader}) and the
- * writing settings; nothing else. The concept of the research is not an input: mission and fence are the only measure.
+ * Phase 4, from the basket to the book. The input is the basket ({@link SourceBasket}, references with a
+ * {@link BasketReader}) with the book idea it was collected for (mission and Weidezaun with inclusions and exclusions,
+ * {@link SourceBasket#fence()}) and the writing settings; nothing else. The concept of the research is not an input: mission and fence are the only measure.
  * <ol>
  * <li>{@link #open}, opening up the basket: a profile per source against the fence ({@link SourceRater}); the
  * passages of a source outside the fence and of the parts of a mixed source outside it (by the profile's headings)
@@ -482,8 +482,8 @@ public final class BookRun {
     }
 
     /** The whole run: {@link #open}, then {@link #write}. */
-    public Result run(Fence fence, SourceBasket basket, BasketReader reader) throws IOException {
-        return write(open(fence, basket, reader));
+    public Result run(SourceBasket basket, BasketReader reader) throws IOException {
+        return write(open(basket, reader));
     }
 
     /** The address of a source for its name and site: the id of a source whose id is a web address, else none. */
@@ -495,9 +495,12 @@ public final class BookRun {
 
     // ------------------------------------------------------------------------------------------------- open
 
-    /** Opening up the basket: profiles, groups, questions with their verdict against mission and fence. */
-    public Opening open(Fence fence, SourceBasket basket, BasketReader reader) {
-        Fence idea = fence == null ? Fence.of("") : fence;
+    /**
+     * Opening up the basket: profiles, groups, questions with their verdict against mission and fence; the fence is
+     * the basket's.
+     */
+    public Opening open(SourceBasket basket, BasketReader reader) {
+        Fence idea = basket.fence();
         Switches switches = new Switches();
         List<Step> steps = new ArrayList<Step>();
         List<BasketPassage> passages = new ArrayList<BasketPassage>();
@@ -720,7 +723,7 @@ public final class BookRun {
         }
         PlanSectionWriter writer = new PlanSectionWriter(new Metered(writerChat, writeStep, switches),
                 checkChat == null ? null : new Metered(checkChat, writeStep, switches), PassageLookup.of(lookup),
-                new SentenceVerdicts(), new WrittenSections(), settings.writer, clock, log);
+                new SentenceVerdicts(), new WrittenSections(), settings.writer, clock, log, opening.fence);
         List<WrittenSection> sections = writer.writeAll(plan);
         writeStep.millis = clock.millis() - began;
 

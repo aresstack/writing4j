@@ -85,7 +85,7 @@ final class BasketStock implements BasketReader {
                 stock.classes.put(text(p, "id"), text(p, "art"));
             }
         }
-        stock.basket = new SourceBasket(new ArrayList<SourceRef>(sources.values()));
+        stock.basket = new SourceBasket(stock.fence, new ArrayList<SourceRef>(sources.values()));
         return stock;
     }
 

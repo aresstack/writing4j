@@ -1,5 +1,6 @@
 package com.aresstack.writing4j.planwriter;
 
+import com.aresstack.knowledge4j.scope.Fence;
 import com.aresstack.writing4j.memory.QuestionEvidence;
 import com.aresstack.writing4j.missionreport.BookSection;
 import com.aresstack.writing4j.missionreport.SentenceLookup;
@@ -362,6 +363,31 @@ public class PlanSectionWriterTest {
                 Collections.<SectionPlan.Evidence>emptyList(),
                 Arrays.asList(q("q1", Q1, QuestionEvidence.LABEL_DIRECT), q("q5", Q5, QuestionEvidence.LABEL_DIRECT)),
                 Collections.<SectionPlan.Contradiction>emptyList());
+    }
+
+    @Test
+    public void everySectionPromptShowsMissionAndWeidezaunWithWhatIsExcluded() throws Exception {
+        Map<String, String> drafts = new LinkedHashMap<String, String>();
+        drafts.put("Überwachung", "Tempo 30 senkt den Lärm in Wohnstraßen deutlich [1].");
+        Map<String, String[]> said = new LinkedHashMap<String, String[]>();
+        said.put("Tempo 30 senkt", says("GEDECKT", "Tempo 30 senkt den Lärm in Wohnstraßen deutlich",
+                "Die Passage sagt das."));
+        Fence fence = new Fence("Verkehrsruhe in Wohnstraßen", "", Arrays.asList("Lärm"),
+                Arrays.asList("Autobahnen"), "", "");
+
+        Scripted fenced = writer(drafts, new LinkedHashMap<String, String>());
+        new PlanSectionWriter(fenced, checker(said), lookup(), new SentenceVerdicts(), null, options(), CLOCK, null,
+                fence).write(plan(watch()), watch());
+        String prompt = fenced.requests.get(0).get(1).getContent();
+        assertTrue(prompt, prompt.contains("BOOK MISSION AND WEIDEZAUN"));
+        assertTrue(prompt, prompt.contains("Verkehrsruhe in Wohnstraßen"));
+        assertTrue(prompt, prompt.contains("Ausgeschlossen:\n- Autobahnen"));
+
+        Scripted open = writer(drafts, new LinkedHashMap<String, String>());
+        new PlanSectionWriter(open, checker(said), lookup(), new SentenceVerdicts(), null, options(), CLOCK, null)
+                .write(plan(watch()), watch());
+        String without = open.requests.get(0).get(1).getContent();
+        assertFalse(without, without.contains("WEIDEZAUN"));
     }
 
     @Test

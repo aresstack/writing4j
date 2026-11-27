@@ -2,6 +2,7 @@ package com.aresstack.writing4j.planwriter;
 
 import com.aresstack.knowledge4j.model.ThinkingMode;
 import com.aresstack.writing4j.memory.QuestionEvidence;
+import com.aresstack.knowledge4j.scope.Fence;
 import com.aresstack.writing4j.missionreport.BookSection;
 import com.aresstack.writing4j.missionreport.SentenceLookup;
 import com.aresstack.writing4j.engine.WritingSlots;
@@ -367,6 +368,8 @@ public final class PlanSectionWriter {
     private final Clock clock;
     private final Consumer<String> log;
     private final WritingMemory memory;
+    /** Mission and Weidezaun as every section's prompt shows them, in full; {@code ""} without a fence. */
+    private final String fence;
 
     /**
      * @param writer   the model on {@code phase.draft.writer} (the section and {@link #REWRITE_ROLE})
@@ -380,6 +383,18 @@ public final class PlanSectionWriter {
     public PlanSectionWriter(MainModelChat writer, MainModelChat checker, PassageLookup passages,
                              SentenceVerdicts verdicts, WrittenSections store, Options options, Clock clock,
                              Consumer<String> log) {
+        this(writer, checker, passages, verdicts, store, options, clock, log, null);
+    }
+
+    /**
+     * As above, for a book with a fence: every section's prompt shows its mission and Weidezaun with what belongs to it
+     * and what is excluded, so the writer leaves out what the reader shut out even when a passage says it.
+     *
+     * @param fence the book's fence (the basket's); {@code null} or an empty one shows none
+     */
+    public PlanSectionWriter(MainModelChat writer, MainModelChat checker, PassageLookup passages,
+                             SentenceVerdicts verdicts, WrittenSections store, Options options, Clock clock,
+                             Consumer<String> log, Fence fence) {
         if (writer == null || passages == null || verdicts == null) {
             throw new IllegalArgumentException("the writer needs a model, the passages and the verdicts");
         }
@@ -396,6 +411,8 @@ public final class PlanSectionWriter {
         this.log = log == null ? line -> {
         } : log;
         this.memory = new WritingMemory(WritingMemory.Budget.defaults(), this.options.german());
+        this.fence = fence == null || (fence.getMission().isEmpty() && !fence.hasBounds()) ? ""
+                : fence.describe(this.options.german(), Integer.MAX_VALUE).trim();
     }
 
     // ------------------------------------------------------------------------------------------ the plan's order
@@ -588,6 +605,12 @@ public final class PlanSectionWriter {
      * and the gaps the plan already shows. The assignment is {@code null} when no passage has a text.
      */
     static Prepared prepare(SectionPlan.Section section, String chapterTitle, PassageLookup lookup, Options options) {
+        return prepare(section, chapterTitle, lookup, options, "");
+    }
+
+    /** As above, with the book's mission and Weidezaun as the prompt shows them ({@code ""}: none). */
+    static Prepared prepare(SectionPlan.Section section, String chapterTitle, PassageLookup lookup, Options options,
+                            String fence) {
         List<Entry> entries = new ArrayList<Entry>();
         List<String> withoutText = new ArrayList<String>();
         Set<String> seen = new HashSet<String>();
@@ -739,6 +762,7 @@ public final class PlanSectionWriter {
         SectionAssignment assignment = SectionAssignment.builder(section.getId())
                 .title(section.getTitle())
                 .brief(brief(chapterTitle, contradictions > 0))
+                .fence(fence)
                 .keyPoints(keyPoints)
                 .passages(pack)
                 .bookLanguage(options.bookLanguage())
@@ -1043,7 +1067,7 @@ public final class PlanSectionWriter {
             throws IOException {
         long began = clock.millis();
         String chapterTitle = chapterOf(plan, section.getId());
-        Prepared prepared = prepare(section, chapterTitle, passages, options);
+        Prepared prepared = prepare(section, chapterTitle, passages, options, fence);
         int memoryLines = -1;
         if (before != null && prepared.assignment != null) {
             Map<String, Integer> numbers = new LinkedHashMap<String, Integer>();

@@ -185,6 +185,10 @@ public final class SectionWriterPrompt {
         String language = a.getBookLanguage();
         StringBuilder sb = new StringBuilder();
         sb.append("Book language: ").append(language).append(".\n\n");
+        if (!a.getFence().isEmpty()) {
+            sb.append("BOOK MISSION AND WEIDEZAUN (the book covers only what lies inside; leave out what it "
+                    + "excludes, even when a passage says it):\n").append(a.getFence()).append("\n\n");
+        }
         sb.append("SECTION: ").append(a.getTitle()).append('\n');
         if (!a.getBrief().isEmpty()) {
             sb.append("Brief: ").append(a.getBrief()).append('\n');

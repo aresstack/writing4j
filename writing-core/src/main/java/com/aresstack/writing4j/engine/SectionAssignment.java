@@ -26,6 +26,7 @@ public final class SectionAssignment {
     private final String synopsis;
     private final String previousDigest;
     private final List<String> glossary;
+    private final String fence;
     private final String bookLanguage;
     private final int sectionWords;
     private final int wordsPerCall;
@@ -53,6 +54,7 @@ public final class SectionAssignment {
         this.synopsis = b.synopsis;
         this.previousDigest = b.previousDigest;
         this.glossary = Collections.unmodifiableList(new ArrayList<String>(b.glossary));
+        this.fence = b.fence;
         this.bookLanguage = b.bookLanguage;
         this.wordsPerCall = Math.max(MIN_WORDS_PER_CALL, b.wordsPerCall);
         this.sectionWords = b.sectionWords > 0 ? b.sectionWords : this.wordsPerCall;
@@ -193,6 +195,11 @@ public final class SectionAssignment {
         return glossary;
     }
 
+    /** Mission and Weidezaun of the book as the prompt shows them; {@code ""} when the book has none. */
+    public String getFence() {
+        return fence;
+    }
+
     public String getBookLanguage() {
         return bookLanguage;
     }
@@ -322,6 +329,7 @@ public final class SectionAssignment {
         b.synopsis = synopsis;
         b.previousDigest = previousDigest;
         b.glossary = glossary;
+        b.fence = fence;
         b.bookLanguage = bookLanguage;
         b.sectionWords = sectionWords;
         b.wordsPerCall = wordsPerCall;
@@ -363,6 +371,7 @@ public final class SectionAssignment {
         b.synopsis = synopsis;
         b.previousDigest = digest;
         b.glossary = glossary;
+        b.fence = fence;
         b.bookLanguage = bookLanguage;
         b.wordsPerCall = words;
         b.sectionWords = words;
@@ -389,6 +398,7 @@ public final class SectionAssignment {
         private String synopsis = "";
         private String previousDigest = "";
         private List<String> glossary = new ArrayList<String>();
+        private String fence = "";
         private String bookLanguage = "English";
         private int sectionWords;
         private int wordsPerCall = 450;
@@ -452,6 +462,12 @@ public final class SectionAssignment {
 
         public Builder glossary(List<String> value) {
             this.glossary = value == null ? new ArrayList<String>() : new ArrayList<String>(value);
+            return this;
+        }
+
+        /** Mission and Weidezaun as described text (inclusions and exclusions); {@code null} or blank: none. */
+        public Builder fence(String value) {
+            this.fence = value == null ? "" : value.trim();
             return this;
         }
 

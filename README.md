@@ -12,8 +12,9 @@ quality checks and manuscript assembly.
 
 ## From the basket to the book
 
-The input is mission and Weidezaun (`Fence`), the basket of sources (`SourceBasket`, references only, read through a
-`BasketReader`) and the writing settings; nothing else. How the sources were found (a research run of
+The input is the basket of sources (`SourceBasket`, references only, read through a `BasketReader`) with the mission
+and Weidezaun it was collected for (`SourceBasket.fence()`, inclusions and exclusions) and the writing settings;
+nothing else. The fence reaches every step that judges or writes, the section writer included. How the sources were found (a research run of
 [Research4j](https://github.com/aresstack/research4j), the user's favourites, a folder) is no input, and no search plan
 of the research steers the book. `BookRun` (module `writing-core`) runs:
 

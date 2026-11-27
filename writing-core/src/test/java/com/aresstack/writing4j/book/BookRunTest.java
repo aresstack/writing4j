@@ -60,7 +60,7 @@ public class BookRunTest {
                 PlanSectionWriter.Options.defaults().withTopUp(false));
 
         BookRun.Result result = new BookRun(script, script, script, new WordVectors(), settings, CLOCK, null)
-                .run(stock.fence, stock.basket, stock);
+                .run(stock.basket, stock);
 
         BookRun.Opening opening = result.getOpening();
         assertEquals(7, opening.getProfiles().size());
@@ -145,7 +145,7 @@ public class BookRunTest {
             BookRun.Settings settings = new BookRun.Settings("de", stock.targetWords, 0, capacities[i], null, null,
                     null, PlanSectionWriter.Options.defaults().withTopUp(false));
             books[i] = new BookRun(script, script, script, new WordVectors(), settings, CLOCK, null)
-                    .run(stock.fence, stock.basket, stock).book();
+                    .run(stock.basket, stock).book();
         }
         assertEquals("one GPU call after call or a cloud service in parallel: the same book", books[0], books[1]);
     }
@@ -158,7 +158,7 @@ public class BookRunTest {
         }
         Script script = new Script();
         BookRun.Opening opening = new BookRun(script, script, null, new WordVectors(),
-                BookRun.Settings.of("de", 0), CLOCK, null).open(stock.fence, stock.basket, stock);
+                BookRun.Settings.of("de", 0), CLOCK, null).open(stock.basket, stock);
 
         assertEquals(4, opening.getSteps().size());
         assertFalse(opening.getQuestions().isEmpty());
