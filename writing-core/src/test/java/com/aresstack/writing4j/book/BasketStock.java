@@ -225,15 +225,8 @@ final class BasketStock implements BasketReader {
         String pretty = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(json);
         Files.write(new File(out, "ergebnis.json").toPath(), pretty.getBytes(StandardCharsets.UTF_8));
         Files.write(new File(out, "buch.md").toPath(), result.book().getBytes(StandardCharsets.UTF_8));
-        StringBuilder report = new StringBuilder(result.getReport().text(ZoneId.of("Europe/Berlin")));
-        report.append("\n\nFragen aus dem Korb\n");
-        for (BookRun.QuestionLine line : result.getQuestionLines()) {
-            report.append("- ").append(line.getQuestion().getId()).append(' ').append(line.getState()).append(": ")
-                    .append(line.getQuestion().getText())
-                    .append(line.getSection().isEmpty() ? "" : " → " + line.getSection())
-                    .append(line.getReason().isEmpty() ? "" : " (" + line.getReason() + ")").append('\n');
-        }
-        Files.write(new File(out, "bericht.txt").toPath(), report.toString().getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(out, "bericht.txt").toPath(),
+                result.report(ZoneId.of("Europe/Berlin")).getBytes(StandardCharsets.UTF_8));
         return json;
     }
 

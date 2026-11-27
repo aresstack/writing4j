@@ -546,6 +546,22 @@ public final class BookRun {
             return citedOutsideFence;
         }
 
+        /**
+         * The mission report as text, then every question of the basket with where it is answered or why it stays
+         * open.
+         */
+        public String report(java.time.ZoneId zone) {
+            StringBuilder out = new StringBuilder(getReport().text(zone));
+            out.append("\n\nFragen aus dem Korb\n");
+            for (QuestionLine line : getQuestionLines()) {
+                out.append("- ").append(line.getQuestion().getId()).append(' ').append(line.getState()).append(": ")
+                        .append(line.getQuestion().getText())
+                        .append(line.getSection().isEmpty() ? "" : " → " + line.getSection())
+                        .append(line.getReason().isEmpty() ? "" : " (" + line.getReason() + ")").append('\n');
+            }
+            return out.toString();
+        }
+
         /** The book as Markdown: chapter and section headings, the written text with its markers. */
         public String book() {
             StringBuilder out = new StringBuilder();
