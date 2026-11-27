@@ -240,6 +240,15 @@ public final class SourceRater {
      */
     public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing,
                                       Runnable onEach, Pieces pieces) {
+        return rateAll(sources, existing, onEach, pieces, null);
+    }
+
+    /**
+     * As {@link #rateAll(List, Map, Runnable, Pieces)}; {@code rated} gets every rating the model made, as soon as
+     * it is made (not those taken from {@code existing}), so a host can keep it ({@code null}: nobody).
+     */
+    public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing,
+                                      Runnable onEach, Pieces pieces, final Consumer<SourceRating> rated) {
         final Runnable each = onEach == null ? new Runnable() {
             @Override
             public void run() {
@@ -270,7 +279,7 @@ public final class SourceRater {
             final AtomicInteger failuresInRow = new AtomicInteger();
             final AtomicReference<String> lastFailure = new AtomicReference<String>("");
             Pieces run = pieces == null ? Pieces.parallel(options.getParallel()) : pieces;
-            List<SourceRating> rated = run.run(STAGE, ask, group -> titleOf(sampleOf(groups.get(group))), group -> {
+            List<SourceRating> answers = run.run(STAGE, ask, group -> titleOf(sampleOf(groups.get(group))), group -> {
                 SourceSample first = sampleOf(groups.get(group));
                 if (failuresInRow.get() >= Options.STOP_AFTER_FAILURES) {
                     each.run();
@@ -279,6 +288,9 @@ public final class SourceRater {
                             Collections.<String>emptyList());
                 }
                 SourceRating rating = rate(first);
+                if (rating.isOk() && rated != null) {
+                    rated.accept(rating);
+                }
                 if (rating.isOk()) {
                     failuresInRow.set(0);
                 } else {
@@ -289,7 +301,7 @@ public final class SourceRater {
                 return rating;
             });
             for (int i = 0; i < ask.size(); i++) {
-                byGroup.put(ask.get(i), rated.get(i));
+                byGroup.put(ask.get(i), answers.get(i));
             }
         }
         List<SourceRating> out = new ArrayList<SourceRating>(sources.size());
@@ -310,6 +322,38 @@ public final class SourceRater {
     }
 
     /** The group a source shares its rating with: its host, or itself when the rating is asked with a fence. */
+    /** The key of {@code existing} for {@code source}: with a fence every source is its own group. */
+    public String groupKey(SourceSample source) {
+        return groupOf(source);
+    }
+
+    /**
+     * The key a {@link ProfileMemory} keeps the profile of {@code source} under: a fingerprint of the sample (address,
+     * title, first passage, headings), the fence, the language and the passage length, so a changed page or fence asks
+     * the model again.
+     */
+    public String memoryKey(SourceSample source) {
+        StringBuilder text = new StringBuilder("profil-1\n");
+        text.append(german ? "de" : "en").append('\n').append(options.getPassageChars()).append('\n');
+        text.append(fence == null ? "" : fence.basis()).append('\n');
+        text.append(source.getSourceId()).append('\n').append(source.getAddress()).append('\n');
+        text.append(source.getTitle()).append('\n').append(source.getFirstPassage()).append('\n');
+        for (String heading : source.getHeadings()) {
+            text.append(heading).append('\n');
+        }
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(
+                    text.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 16; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
     private String groupOf(SourceSample source) {
         if (fence != null) {
             return "quelle:" + source.getSourceId();

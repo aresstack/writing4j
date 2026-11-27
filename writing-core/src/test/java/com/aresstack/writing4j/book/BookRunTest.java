@@ -208,6 +208,54 @@ public class BookRunTest {
                 Arrays.asList("quellensteckbriefe", "belegpruefung"), stages);
     }
 
+    @Test
+    public void anInterruptedRunTakesTheProfilesItAlreadyMadeAndAsksOnlyForTheRest() throws Exception {
+        BasketStock stock;
+        try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {
+            stock = BasketStock.korb(in);
+        }
+        final java.util.Map<String, String> kept = new java.util.concurrent.ConcurrentHashMap<String, String>();
+        com.aresstack.writing4j.sourcerating.ProfileMemory memory =
+                new com.aresstack.writing4j.sourcerating.ProfileMemory() {
+                    @Override
+                    public String recall(String key) {
+                        return kept.get(key);
+                    }
+
+                    @Override
+                    public void remember(String key, String profile) {
+                        kept.put(key, profile);
+                    }
+                };
+        Script script = new Script();
+        BookRun.Preparation first = new BookRun(script, script, script, new WordVectors(),
+                settings(stock, 2).withProfileMemory(memory), CLOCK, null).prepare(stock.basket, stock, null);
+        assertEquals("every profile is kept as soon as it is made", 7, kept.size());
+
+        String forgotten = kept.keySet().iterator().next();
+        kept.remove(forgotten);
+        final List<Integer> asked = java.util.Collections.synchronizedList(new ArrayList<Integer>());
+        com.aresstack.knowledge4j.run.Pieces counting = new com.aresstack.knowledge4j.run.Pieces() {
+            @Override
+            public <T, R> List<R> run(String stage, List<T> items, java.util.function.Function<T, String> title,
+                                      java.util.function.Function<T, R> work) {
+                asked.add(items.size());
+                return com.aresstack.knowledge4j.run.Pieces.parallel(1).run(stage, items, title, work);
+            }
+        };
+        BookRun.Preparation again = new BookRun(script, script, script, new WordVectors(),
+                settings(stock, 2).withProfileMemory(memory).withPieces(counting), CLOCK, null)
+                .prepare(stock.basket, stock, null);
+        assertEquals("only the forgotten source is asked again", Arrays.asList(1), asked);
+        assertEquals(first.getProfiles().keySet(), again.getProfiles().keySet());
+        for (String id : first.getProfiles().keySet()) {
+            assertEquals(first.getProfiles().get(id).getKind(), again.getProfiles().get(id).getKind());
+            assertEquals(first.getProfiles().get(id).getFit().getRelation(),
+                    again.getProfiles().get(id).getFit().getRelation());
+        }
+        assertEquals(7, kept.size());
+    }
+
     private static String count(List<String> reports, String start) {
         for (String report : reports) {
             if (report.startsWith(start)) {

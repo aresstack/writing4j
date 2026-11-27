@@ -1,5 +1,10 @@
 package com.aresstack.writing4j.sourcerating;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -250,5 +255,108 @@ public final class SourceRating {
 
     private static String text(String value) {
         return value == null ? "" : value;
+    }
+
+    /** This rating as JSON, for a {@link ProfileMemory}; {@link #fromJson} reads it back. */
+    public String toJson() {
+        JsonObject json = new JsonObject();
+        json.addProperty("sourceId", sourceId);
+        json.addProperty("address", address);
+        json.addProperty("host", host);
+        json.addProperty("title", title);
+        json.addProperty("kind", kind == null ? null : kind.name());
+        json.addProperty("jurisdiction", jurisdiction == null ? null : jurisdiction.name());
+        json.addProperty("date", date);
+        json.addProperty("selfInterest", selfInterest == null ? null : selfInterest.name());
+        json.addProperty("publisher", publisher);
+        json.addProperty("reason", reason);
+        if (suggestion != null) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("domain", suggestion.getDomain());
+            entry.addProperty("kind", suggestion.getKind() == null ? null : suggestion.getKind().name());
+            entry.addProperty("jurisdiction", suggestion.getJurisdiction() == null ? null
+                    : suggestion.getJurisdiction().name());
+            entry.addProperty("note", suggestion.getNote());
+            json.add("suggestion", entry);
+        }
+        json.addProperty("model", model);
+        json.addProperty("time", time);
+        json.addProperty("status", status.name());
+        json.addProperty("problem", problem);
+        json.addProperty("sampleId", sampleId);
+        JsonArray said = new JsonArray();
+        for (String answer : answers) {
+            said.add(answer);
+        }
+        json.add("answers", said);
+        JsonObject f = new JsonObject();
+        f.addProperty("subject", fit.getSubject());
+        f.addProperty("relation", fit.getRelation() == null ? null : fit.getRelation().name());
+        JsonArray outside = new JsonArray();
+        for (String part : fit.getOutsideParts()) {
+            outside.add(part);
+        }
+        f.add("outsideParts", outside);
+        json.add("fit", f);
+        return json.toString();
+    }
+
+    /** A rating from {@link #toJson()}; {@code null} when the text is not one (unreadable or of another form). */
+    public static SourceRating fromJson(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            JsonObject json = JsonParser.parseString(text).getAsJsonObject();
+            KnownDomains.Entry suggestion = null;
+            if (json.has("suggestion") && json.get("suggestion").isJsonObject()) {
+                JsonObject entry = json.getAsJsonObject("suggestion");
+                suggestion = new KnownDomains.Entry(string(entry, "domain"),
+                        named(Kind.class, string(entry, "kind")), named(Jurisdiction.class,
+                        string(entry, "jurisdiction")), string(entry, "note"));
+            }
+            Fit fit = Fit.NONE;
+            if (json.has("fit") && json.get("fit").isJsonObject()) {
+                JsonObject f = json.getAsJsonObject("fit");
+                fit = new Fit(string(f, "subject"), named(Relation.class, string(f, "relation")),
+                        strings(f, "outsideParts"));
+            }
+            return new SourceRating(string(json, "sourceId"), string(json, "address"), string(json, "host"),
+                    string(json, "title"), named(Kind.class, string(json, "kind")),
+                    named(Jurisdiction.class, string(json, "jurisdiction")), string(json, "date"),
+                    named(SelfInterest.class, string(json, "selfInterest")), string(json, "publisher"),
+                    string(json, "reason"), suggestion, string(json, "model"), string(json, "time"),
+                    named(Status.class, string(json, "status")), string(json, "problem"),
+                    string(json, "sampleId"), strings(json, "answers"), fit);
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    private static String string(JsonObject json, String name) {
+        JsonElement value = json.get(name);
+        return value == null || value.isJsonNull() ? "" : value.getAsString();
+    }
+
+    private static List<String> strings(JsonObject json, String name) {
+        List<String> out = new ArrayList<String>();
+        JsonElement value = json.get(name);
+        if (value != null && value.isJsonArray()) {
+            for (JsonElement item : value.getAsJsonArray()) {
+                out.add(item.isJsonNull() ? "" : item.getAsString());
+            }
+        }
+        return out;
+    }
+
+    private static <E extends Enum<E>> E named(Class<E> type, String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, name);
+        } catch (IllegalArgumentException unknown) {
+            return null;
+        }
     }
 }

@@ -150,6 +150,7 @@ public final class BookRun {
         private double mergeSimilarity = DEFAULT_MERGE_SIMILARITY;
         private List<String> subjectWords = Collections.emptyList();
         private Pieces pieces;
+        private com.aresstack.writing4j.sourcerating.ProfileMemory profiles;
 
         /**
          * @param capacity the concurrent calls the research model takes, as the host's model port gives it (at
@@ -236,6 +237,20 @@ public final class BookRun {
         public Settings withPieces(Pieces value) {
             this.pieces = value;
             return this;
+        }
+
+        /**
+         * Where source profiles are kept between runs ({@code null}: nowhere): a cancelled or interrupted run that
+         * starts again takes every profile whose source and fence did not change, and asks the model only for the rest.
+         */
+        public Settings withProfileMemory(com.aresstack.writing4j.sourcerating.ProfileMemory value) {
+            this.profiles = value;
+            return this;
+        }
+
+        /** Where source profiles are kept; never {@code null}. */
+        public com.aresstack.writing4j.sourcerating.ProfileMemory getProfileMemory() {
+            return profiles == null ? com.aresstack.writing4j.sourcerating.ProfileMemory.NONE : profiles;
         }
 
         /** How the pieces of a stage run; never {@code null}. */
@@ -771,8 +786,32 @@ public final class BookRun {
         SourceRater rater = new SourceRater(new Metered(researchChat, profileStep, switches), KnownDomains.none(),
                 settings.language, settings.rater, log, idea);
         Map<String, SourceRating> profiles = new LinkedHashMap<String, SourceRating>();
-        for (SourceRating rating : rater.rateAll(samples, Collections.<String, SourceRating>emptyMap(),
-                counter(report, profileStep.getName(), samples.size()), settings.getPieces())) {
+        // Profiles of an earlier, cancelled or interrupted run with the same source and fence are taken as they are.
+        final com.aresstack.writing4j.sourcerating.ProfileMemory memory = settings.getProfileMemory();
+        Map<String, SourceRating> earlier = new LinkedHashMap<String, SourceRating>();
+        final Map<String, String> keyOf = new java.util.concurrent.ConcurrentHashMap<String, String>();
+        for (SourceSample sample : samples) {
+            String key = rater.memoryKey(sample);
+            keyOf.put(sample.getSourceId(), key);
+            SourceRating kept = SourceRating.fromJson(memory.recall(key));
+            if (kept != null && kept.isOk() && kept.getSourceId().equals(sample.getSourceId())) {
+                earlier.put(rater.groupKey(sample), kept);
+            }
+        }
+        if (!earlier.isEmpty()) {
+            log.accept("book run: " + earlier.size() + " of " + samples.size() + " source profiles from memory");
+        }
+        for (SourceRating rating : rater.rateAll(samples, earlier,
+                counter(report, profileStep.getName(), samples.size()), settings.getPieces(), made -> {
+                    String key = keyOf.get(made.getSourceId());
+                    if (key != null) {
+                        try {
+                            memory.remember(key, made.toJson());
+                        } catch (RuntimeException notKept) {
+                            log.accept("book run: a source profile was not kept: " + notKept.getClass().getSimpleName());
+                        }
+                    }
+                })) {
             profiles.put(rating.getSourceId(), rating);
         }
         report.step(profileStep.getName(), samples.size(), samples.size());
