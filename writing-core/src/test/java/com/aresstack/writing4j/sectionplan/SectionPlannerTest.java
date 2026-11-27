@@ -318,6 +318,26 @@ public class SectionPlannerTest {
     }
 
     @Test
+    public void theBookFollowsTheOrderOfItsTopicsAndAShortBookCarriesItsTitle() throws IOException {
+        // the outline's order: basics first, then the light topic, then the heaviest
+        card("kapitel-1", "Grundlagen", 0);
+        card("kapitel-2", "Werkzeug", 0);
+        card("kapitel-3", "Schnitt", 0);
+        evidence("kapitel-1", 4, 2);
+        evidence("kapitel-2", 2, 1);
+        evidence("kapitel-3", 5, 3);
+
+        SectionPlan plan = planner(1200).bookTitle("Obstbäume schneiden").plan(TIME);
+
+        assertEquals("no topic earns a chapter of its own in so few words", 1, plan.getChapters().size());
+        SectionPlan.Chapter chapter = plan.getChapters().get(0);
+        assertEquals("the one chapter is the book, not a remainder", "Obstbäume schneiden", chapter.getTitle());
+        assertEquals("weight picks the sections, the order of the topics orders them",
+                Arrays.asList("abschnitt-kapitel-1", "abschnitt-kapitel-3"), sectionIds(chapter));
+        assertEquals(SectionPlanner.COLLECTION_TITLE, planner(1200).plan(TIME).getChapters().get(0).getTitle());
+    }
+
+    @Test
     public void theCardKeepsItsSectionAndOnlyLighterTopicsGoIntoOthers() throws IOException {
         card("karte-rad", "Radverkehr", 0);
         found("t-a", "Lastenräder", ResearchTopic.Fence.INNEN);

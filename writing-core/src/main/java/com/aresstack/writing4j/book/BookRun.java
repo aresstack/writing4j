@@ -379,6 +379,8 @@ public final class BookRun {
         private final List<Step> steps;
         private final Switches switches;
         private final List<OrderingHint> hints;
+        /** The working title of the book (from the questions of the mission), else the mission; may be empty. */
+        String title = "";
 
         Opening(Fence fence, List<BasketPassage> passages, Map<String, String> setAside,
                 Map<String, EmbeddingPort.EmbeddingVector> vectors, Map<String, SourceRating> profiles,
@@ -988,8 +990,10 @@ public final class BookRun {
         }
         log.accept("book run: " + list.size() + " questions (" + demandedVectors.size()
                 + " demanded by the mission), " + pursued + " pursued");
-        return new Opening(idea, prepared.inside, prepared.setAside, vectors, prepared.profiles, groups, list, steps,
-                switches, chosen.getHints());
+        Opening opening = new Opening(idea, prepared.inside, prepared.setAside, vectors, prepared.profiles, groups,
+                list, steps, switches, chosen.getHints());
+        opening.title = demanded.getTitle().trim().isEmpty() ? idea.getMission().trim() : demanded.getTitle().trim();
+        return opening;
     }
 
     /** The name of the field a cornerstone belongs to on the cards; empty when none. */
@@ -1088,7 +1092,8 @@ public final class BookRun {
         for (EvidenceVerdict verdict : verdicts) {
             memory.record(verdict);
         }
-        SectionPlan plan = new SectionPlanner(memory).targetWords(settings.targetWords).plan(clock.millis());
+        SectionPlan plan = new SectionPlanner(memory).targetWords(settings.targetWords).bookTitle(opening.title)
+                .plan(clock.millis());
         planStep.millis = clock.millis() - began;
 
         // 9 writing in order with the writing memory, bundled sentence check
@@ -1121,7 +1126,8 @@ public final class BookRun {
             }
         }
         MissionReport report = new MissionCheck(memory).sections(book).sentences(writer.sentenceLookup())
-                .placements(plan.getPlacements()).sources(sourceInfo).report(clock.millis());
+                .placements(plan.getPlacements()).sources(sourceInfo)
+                .requested(settings.targetWords, settings.targetWords).report(clock.millis());
         List<QuestionLine> lines = questionLines(opening.questions, memory, plan, sections, verdicts);
         log.accept("book run: " + sections.size() + " sections, " + switches.count + " model switches");
         return new Result(opening, verdicts, plan, sections, report, lines, steps,

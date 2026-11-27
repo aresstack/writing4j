@@ -39,7 +39,9 @@ import java.util.function.Function;
  * joins the chapter of the topic it shares evidence with, else of the one the model names, else of the one it shares
  * words with, and competes there by weight for a section of its own; those that fit nowhere form the chapter
  * "Weitere Themen aus der Recherche" when the words hold it, else they join the chapter with the most words per topic
- * and a note says so.
+ * and a note says so. When no topic earns a chapter (a short book), that chapter is the whole book and carries the
+ * book's title ({@link #bookTitle}). Weight decides which topics get a chapter or a section of their own; chapters and
+ * sections then follow the order of the topics (the outline's order for a newcomer), the collection last.
  * <p>
  * <b>Words and sections.</b> The rules of step 5a: a chapter keeps at most words / 450 sections, no section falls
  * below 350 words while the budget allows it. Within a chapter the topic it is named after keeps its own section,
@@ -84,6 +86,7 @@ public final class SectionPlanner {
 
     private final ResearchMemory memory;
     private int targetWords;
+    private String bookTitle = "";
     private int wordsPerPassage = WORDS_PER_PASSAGE;
     private Function<String, String> parentOf = id -> "";
     private HostChooser chooser;
@@ -100,6 +103,15 @@ public final class SectionPlanner {
     /** The length of the book from component 1; 0 or less when the mission names none. */
     public SectionPlanner targetWords(int words) {
         this.targetWords = words;
+        return this;
+    }
+
+    /**
+     * The title of the book; it names the one chapter of a book too short for a chapter per topic, which otherwise
+     * would read as a remainder ("{@value #COLLECTION_TITLE}"). Empty keeps that title.
+     */
+    public SectionPlanner bookTitle(String title) {
+        this.bookTitle = title == null ? "" : title.trim();
         return this;
     }
 
@@ -281,7 +293,10 @@ public final class SectionPlanner {
             }
         }
         if (!leftover.isEmpty() && (chapters.isEmpty() || fits(room, open + 1))) {
-            Family collection = new Family(COLLECTION_ID, COLLECTION_TITLE, SectionPlan.ChapterKind.SAMMEL, null);
+            // When no topic earns a chapter of its own (a short book), the collection is the whole book and carries
+            // the book's title, not that of a remainder.
+            String title = chapters.isEmpty() && !bookTitle.isEmpty() ? bookTitle : COLLECTION_TITLE;
+            Family collection = new Family(COLLECTION_ID, title, SectionPlan.ChapterKind.SAMMEL, null);
             for (Node node : leftover) {
                 collection.add(node);
             }
@@ -324,7 +339,25 @@ public final class SectionPlanner {
             }
         }
 
+        // The book follows the order of its topics (the outline's order for a newcomer), not their weight; weight
+        // only decides which topics get a chapter or a section of their own. The collection stays last.
+        Collections.sort(chapters, (a, b) -> Integer.compare(firstOrder(a), firstOrder(b)));
+        for (Family family : chapters) {
+            Collections.sort(family.own, (a, b) -> Integer.compare(a.order, b.order));
+        }
         return build(timeMillis, total, given, chapters, nodes, notes);
+    }
+
+    /** Where a chapter stands in the topics' order: its first topic's; the collection last. */
+    private static int firstOrder(Family family) {
+        if (family.kind == SectionPlan.ChapterKind.SAMMEL) {
+            return Integer.MAX_VALUE;
+        }
+        int first = family.root == null ? Integer.MAX_VALUE : family.root.order;
+        for (Node member : family.members) {
+            first = Math.min(first, member.order);
+        }
+        return first;
     }
 
     /** Whether {@code room} holds the floor for {@code chapters} chapters without a share. */
