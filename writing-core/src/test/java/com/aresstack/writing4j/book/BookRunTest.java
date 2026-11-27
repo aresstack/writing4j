@@ -137,6 +137,52 @@ public class BookRunTest {
     }
 
     @Test
+    public void theReadersQuestionsArePursuedAndAGapWithoutEvidenceAndEveryStepReportsEachPiece() throws Exception {
+        BasketStock stock;
+        try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {
+            stock = BasketStock.korb(in);
+        }
+        Script script = new Script();
+        String unanswered = "Welche Farbe hat der Gartenzaun des Nachbarn?";
+        final List<String> reports = java.util.Collections.synchronizedList(new ArrayList<String>());
+        BookRun run = new BookRun(script, script, script, new WordVectors(), settings(stock, 1), CLOCK, null);
+        BookRun.Progress progress = (step, done, total) -> reports.add(step + " " + done + "/" + total);
+        BookRun.Result result = run.write(run.open(run.prepare(stock.basket.withQuestions(
+                Arrays.asList(Script.DRINKING, unanswered)), stock, progress), (java.util.Map<String, String>) null,
+                progress), progress);
+
+        BookRun.QuestionLine drinking = null;
+        BookRun.QuestionLine gap = null;
+        for (BookRun.QuestionLine line : result.getQuestionLines()) {
+            if (line.getQuestion().getText().equals(Script.DRINKING)) {
+                drinking = line;
+            } else if (line.getQuestion().getText().equals(unanswered)) {
+                gap = line;
+            }
+        }
+        assertTrue("the reader's question outside the fence is still pursued", drinking.getQuestion().isPursued());
+        assertEquals(BookRun.Question.Origin.LESER, drinking.getQuestion().getOrigin());
+        assertEquals(BookRun.QuestionLine.State.NACHRECHERCHE, gap.getState());
+        assertTrue(gap.getReason(), gap.getReason().startsWith("vom Leser gefragt"));
+        assertTrue(result.report(ZoneOffset.UTC), result.report(ZoneOffset.UTC).contains(unanswered));
+        for (int done = 1; done <= 7; done++) {
+            assertTrue("each source as soon as it is described: " + reports,
+                    reports.contains("quellensteckbriefe " + done + "/7"));
+        }
+        assertTrue(reports.toString(), reports.contains("belegpruefung 1/" + count(reports, "belegpruefung 0/")));
+        assertTrue(reports.toString(), reports.contains("schreiben 1/" + count(reports, "schreiben 0/")));
+    }
+
+    private static String count(List<String> reports, String start) {
+        for (String report : reports) {
+            if (report.startsWith(start)) {
+                return report.substring(start.length());
+            }
+        }
+        return "?";
+    }
+
+    @Test
     public void theCapacityOfTheModelChangesHowManyCallsRunAtOnceNotTheBook() throws Exception {
         BasketStock stock;
         try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {

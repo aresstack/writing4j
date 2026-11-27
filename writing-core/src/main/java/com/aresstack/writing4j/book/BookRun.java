@@ -66,7 +66,8 @@ import java.util.function.Consumer;
  * terms of the others are judged again with the widened fence) and the reader's sorting of the uncertain middle
  * into the mind map, given to {@link #open}; an empty middle asks nothing.</li>
  * <li>{@link #open}: questions from two sides, those the mission demands top down, the evaluative ones among them
- * (Pflichtfragen, critical ones too), and the outline of the chosen cornerstones in one call: chapters in an order a
+ * (Pflichtfragen, critical ones too), together with the reader's own questions from the basket (always pursued, a gap
+ * in the report when the basket does not answer them), and the outline of the chosen cornerstones in one call: chapters in an order a
  * newcomer understands, each with its questions naming the cornerstones they rest on ({@link CornerstoneOutline},
  * M24; the reader's ordering hints go along as a hint); near duplicates merged; every question checked against
  * mission and fence ({@link StockQuestions}). Questions outside the fence stay in the question list with their
@@ -86,7 +87,8 @@ import java.util.function.Consumer;
  * questions, the question check and the evidence check run that many calls at once. The sieve votes with every model
  * the host offers. Bundling by the context window holds in both
  * modes. The logical order stays: the sections are written one after another with the writing memory whatever the
- * capacity. Every model call is counted per step: calls, failures, tokens, time and model switches.
+ * capacity. Every model call is counted per step: calls, failures, tokens, time and model switches. The steps with many
+ * pieces (source profiles, sieve, evidence check, sections) report each piece as soon as it is done.
  */
 public final class BookRun {
 
@@ -319,8 +321,20 @@ public final class BookRun {
 
     /** A question of the book, with its side and its verdict against mission and fence. */
     public static final class Question {
-        /** Where it comes from: the mission demands it, or the places of a cornerstone answer it. */
-        public enum Origin { PFLICHT, ECKPFEILER }
+        /**
+         * Where it comes from: the mission demands it, the places of a cornerstone answer it, or the reader asked it
+         * in the basket ({@code SourceBasket#questions}). A reader's question is demanded like one of the mission
+         * and always pursued: the check against the fence only notes its verdict, the evidence check decides, and
+         * without evidence it is a gap in the report, never dropped.
+         */
+        public enum Origin {
+            PFLICHT, ECKPFEILER, LESER;
+
+            /** Whether the work must answer it or name it as a gap: the mission's and the reader's questions. */
+            public boolean isDemanded() {
+                return this != ECKPFEILER;
+            }
+        }
 
         private final String id;
         private final String text;
@@ -361,9 +375,12 @@ public final class BookRun {
             return verdict;
         }
 
-        /** Pursued: inside the fence, unclear (the evidence check decides per passage) or not checked. */
+        /**
+         * Pursued: a question of the reader always, else inside the fence, unclear (the evidence check decides per
+         * passage) or not checked.
+         */
         public boolean isPursued() {
-            return verdict.getRelation() != StockQuestions.Relation.AUSSEN;
+            return origin == Origin.LESER || verdict.getRelation() != StockQuestions.Relation.AUSSEN;
         }
     }
 
@@ -737,7 +754,8 @@ public final class BookRun {
         SourceRater rater = new SourceRater(new Metered(researchChat, profileStep, switches), KnownDomains.none(),
                 settings.language, settings.rater, log, idea);
         Map<String, SourceRating> profiles = new LinkedHashMap<String, SourceRating>();
-        for (SourceRating rating : rater.rateAll(samples, Collections.<String, SourceRating>emptyMap())) {
+        for (SourceRating rating : rater.rateAll(samples, Collections.<String, SourceRating>emptyMap(),
+                counter(report, profileStep.getName(), samples.size()))) {
             profiles.put(rating.getSourceId(), rating);
         }
         report.step(profileStep.getName(), samples.size(), samples.size());
@@ -878,6 +896,13 @@ public final class BookRun {
         List<Question.Origin> origins = new ArrayList<Question.Origin>();
         List<String> topics = new ArrayList<String>();
         List<List<String>> candidates = new ArrayList<List<String>>();
+        // The reader's own questions first: merged with a near duplicate of the mission, the reader's wording stays.
+        for (String question : prepared.basket.questions()) {
+            texts.add(question);
+            origins.add(Question.Origin.LESER);
+            topics.add("");
+            candidates.add(new ArrayList<String>());
+        }
         for (String question : demanded.getQuestions()) {
             texts.add(question);
             origins.add(Question.Origin.PFLICHT);
@@ -941,7 +966,7 @@ public final class BookRun {
         }
         List<EmbeddingPort.EmbeddingVector> demandedVectors = new ArrayList<EmbeddingPort.EmbeddingVector>();
         for (int k : kept) {
-            if (origins.get(k) == Question.Origin.PFLICHT) {
+            if (origins.get(k).isDemanded()) {
                 demandedVectors.add(questionVectors.get(k));
             }
         }
@@ -967,7 +992,7 @@ public final class BookRun {
         int demandedIndex = 0;
         for (int j = 0; j < kept.size(); j++) {
             int k = kept.get(j);
-            boolean mission = origins.get(k) == Question.Origin.PFLICHT;
+            boolean mission = origins.get(k).isDemanded();
             List<String> shared = mission && !semantic ? sharedWords(texts.get(k), prepared.inside) : null;
             Question question = new Question(String.format("F%03d", j + 1), texts.get(k), origins.get(k),
                     !mission ? topics.get(k) : semantic ? nearest.get(demandedIndex)
@@ -989,11 +1014,26 @@ public final class BookRun {
             pursued += question.isPursued() ? 1 : 0;
         }
         log.accept("book run: " + list.size() + " questions (" + demandedVectors.size()
-                + " demanded by the mission), " + pursued + " pursued");
+                + " demanded by the mission or the reader), " + pursued + " pursued");
         Opening opening = new Opening(idea, prepared.inside, prepared.setAside, vectors, prepared.profiles, groups,
                 list, steps, switches, chosen.getHints());
         opening.title = demanded.getTitle().trim().isEmpty() ? idea.getMission().trim() : demanded.getTitle().trim();
         return opening;
+    }
+
+    /**
+     * Counts the finished pieces of a step and reports each at once, from whatever thread finished it, so the host sees
+     * the progress while the step runs and not only at its end (Angelo 27.11.: „Quellen beschreiben“ stood at 0 of 88
+     * for minutes).
+     */
+    private static Runnable counter(final Progress progress, final String step, final int total) {
+        final AtomicInteger done = new AtomicInteger();
+        return new Runnable() {
+            @Override
+            public void run() {
+                progress.step(step, Math.min(total, done.incrementAndGet()), total);
+            }
+        };
     }
 
     /** The name of the field a cornerstone belongs to on the cards; empty when none. */
@@ -1060,7 +1100,8 @@ public final class BookRun {
         }
         progressOf.step(judgeStep.getName(), 0, work.size());
         List<EvidenceVerdict> verdicts = new ArrayList<EvidenceVerdict>();
-        for (EvidenceBundleJudge.Result result : judge.judgeAll(work, Collections.<EvidenceVerdict>emptyList(), 1)) {
+        for (EvidenceBundleJudge.Result result : judge.judgeAll(work, Collections.<EvidenceVerdict>emptyList(), 1,
+                counter(progressOf, judgeStep.getName(), work.size()))) {
             verdicts.addAll(result.getVerdicts());
         }
         progressOf.step(judgeStep.getName(), work.size(), work.size());
@@ -1109,7 +1150,8 @@ public final class BookRun {
         PlanSectionWriter writer = new PlanSectionWriter(new Metered(writerChat, writeStep, switches),
                 checkChat == null ? null : new Metered(checkChat, writeStep, switches), PassageLookup.of(lookup),
                 new SentenceVerdicts(), new WrittenSections(), settings.writer, clock, log, opening.fence);
-        List<WrittenSection> sections = writer.writeAll(plan);
+        List<WrittenSection> sections = writer.writeAll(plan, null,
+                counter(progressOf, writeStep.getName(), plan.getSections().size()));
         progressOf.step(writeStep.getName(), plan.getSections().size(), plan.getSections().size());
         writeStep.millis = clock.millis() - began;
 
@@ -1378,9 +1420,10 @@ public final class BookRun {
             if (cited) {
                 state = QuestionLine.State.BEANTWORTET;
                 reason = "";
-            } else if (direct == 0 && question.origin == Question.Origin.PFLICHT) {
+            } else if (direct == 0 && question.origin.isDemanded()) {
                 state = QuestionLine.State.NACHRECHERCHE;
-                reason = "vom Auftrag verlangt, aber kein direkter Beleg im Korb"
+                reason = (question.origin == Question.Origin.LESER ? "vom Leser gefragt" : "vom Auftrag verlangt")
+                        + ", aber kein direkter Beleg im Korb"
                         + (leads > 0 ? " (nur weiterführende Hinweise)" : "") + ": Nachrecherche oder ehrliche Lücke";
             } else if (direct == 0 && leads > 0) {
                 state = QuestionLine.State.NUR_HINWEISE;

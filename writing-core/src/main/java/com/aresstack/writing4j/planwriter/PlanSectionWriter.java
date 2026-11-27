@@ -88,6 +88,9 @@ import java.util.regex.Pattern;
  */
 public final class PlanSectionWriter {
 
+    private static final Runnable NOBODY = () -> {
+    };
+
     /**
      * The adapter's, prompt's and rules' version; a written section records it. 2: a claim whose part names its speaker
      * is no fact, the speaker put in where one still stands as a fact, sources named by their site, the rewrite sees
@@ -960,6 +963,16 @@ public final class PlanSectionWriter {
      * @throws IOException when a written section or a verdict cannot be stored; the other sections are written
      */
     public List<WrittenSection> writeAll(SectionPlan plan, Collection<String> sectionIds) throws IOException {
+        return writeAll(plan, sectionIds, null);
+    }
+
+    /**
+     * As {@link #writeAll(SectionPlan, Collection)}; {@code onEach} hears of every section as soon as it is written or
+     * failed, so a host can show the progress ({@code null}: nobody).
+     */
+    public List<WrittenSection> writeAll(SectionPlan plan, Collection<String> sectionIds, Runnable onEach)
+            throws IOException {
+        final Runnable each = onEach == null ? NOBODY : onEach;
         List<SectionPlan.Section> todo = new ArrayList<SectionPlan.Section>();
         for (SectionPlan.Section section : plan.getSections()) {
             if (sectionIds == null || sectionIds.contains(section.getId())) {
@@ -971,7 +984,7 @@ public final class PlanSectionWriter {
             return out;
         }
         if (options.parallel == 1) {
-            return inOrder(plan, todo);
+            return inOrder(plan, todo, each);
         }
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(options.parallel, todo.size()), runnable -> {
             Thread thread = new Thread(runnable, "plan-section-writer");
@@ -987,6 +1000,7 @@ public final class PlanSectionWriter {
             for (int i = 0; i < futures.size(); i++) {
                 try {
                     out.add(futures.get(i).get());
+                    each.run();
                 } catch (ExecutionException failed) {
                     if (failed.getCause() instanceof IOException) {
                         unstored = unstored == null ? (IOException) failed.getCause() : unstored;
@@ -997,6 +1011,7 @@ public final class PlanSectionWriter {
                             + "fehlgeschlagen: " + failed.getCause(), Collections.<WrittenSection.Gap>emptyList(),
                             Collections.<String>emptyList(), new LinkedHashMap<String, Integer>(), "", clock.millis());
                     out.add(broken);
+                    each.run();
                     try {
                         if (store != null) {
                             store.record(broken);
@@ -1019,7 +1034,8 @@ public final class PlanSectionWriter {
     }
 
     /** The sections one after another in the plan's order, each with the writing memory of those before it. */
-    private List<WrittenSection> inOrder(SectionPlan plan, List<SectionPlan.Section> todo) throws IOException {
+    private List<WrittenSection> inOrder(SectionPlan plan, List<SectionPlan.Section> todo, Runnable each)
+            throws IOException {
         List<WrittenSection> out = new ArrayList<WrittenSection>();
         IOException unstored = null;
         for (SectionPlan.Section section : todo) {
@@ -1028,6 +1044,7 @@ public final class PlanSectionWriter {
                 result = write(plan, section, out);
             } catch (IOException notStored) {
                 unstored = unstored == null ? notStored : unstored;
+                each.run();
                 continue;
             } catch (RuntimeException crashed) {
                 result = failed(section, chapterOf(plan, section.getId()), "Schreiben fehlgeschlagen: " + crashed,
@@ -1042,6 +1059,7 @@ public final class PlanSectionWriter {
                 }
             }
             out.add(result);
+            each.run();
         }
         if (unstored != null) {
             throw unstored;

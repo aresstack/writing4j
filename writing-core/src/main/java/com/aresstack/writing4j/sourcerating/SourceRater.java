@@ -210,6 +210,21 @@ public final class SourceRater {
      * @return one rating per source, in the given order
      */
     public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing) {
+        return rateAll(sources, existing, null);
+    }
+
+    /**
+     * As {@link #rateAll(List, Map)}; {@code onEach} hears of every group as soon as it is rated (or failed), from the
+     * thread that rated it, so a host can show the progress per source ({@code null}: nobody). A group taken from
+     * {@code existing} counts at once.
+     */
+    public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing,
+                                      Runnable onEach) {
+        final Runnable each = onEach == null ? new Runnable() {
+            @Override
+            public void run() {
+            }
+        } : onEach;
         final Map<String, List<SourceSample>> groups = new LinkedHashMap<String, List<SourceSample>>();
         for (SourceSample source : sources) {
             String group = groupOf(source);
@@ -226,6 +241,7 @@ public final class SourceRater {
             SourceRating earlier = existing == null ? null : existing.get(group.getKey());
             if (earlier != null && earlier.isOk()) {
                 byGroup.put(group.getKey(), earlier);
+                each.run();
             } else {
                 ask.add(group.getKey());
             }
@@ -240,6 +256,7 @@ public final class SourceRater {
                     final SourceSample first = sampleOf(groups.get(group));
                     running.put(group, pool.submit(() -> {
                         if (failuresInRow.get() >= Options.STOP_AFTER_FAILURES) {
+                            each.run();
                             return failed(first, known.suggest(first.getHost()), "not asked: the model failed "
                                     + Options.STOP_AFTER_FAILURES + " groups in a row; last: " + lastFailure.get(),
                                     Collections.<String>emptyList());
@@ -251,6 +268,7 @@ public final class SourceRater {
                             lastFailure.set(rating.getProblem());
                             failuresInRow.incrementAndGet();
                         }
+                        each.run();
                         return rating;
                     }));
                 }

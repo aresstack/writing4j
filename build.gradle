@@ -12,7 +12,7 @@ allprojects {
     }
 }
 
-ext.knowledge4jVersion = '0.1.0'
+ext.knowledge4jVersion = '0.2.0'
 ext.gsonVersion = '2.14.0'
 ext.junitVersion = '5.11.4'
 

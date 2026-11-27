@@ -7,7 +7,7 @@ structured, cited document: outline planning, evidence assignment, section draft
 quality checks and manuscript assembly.
 
 > **Status:** in development on `main`, not released. Writing4j depends on
-> [Knowledge4j](https://github.com/aresstack/knowledge4j) 0.1.0 from Maven Central.
+> [Knowledge4j](https://github.com/aresstack/knowledge4j) 0.2.0 from Maven Central.
 
 ## From the basket to the book
 

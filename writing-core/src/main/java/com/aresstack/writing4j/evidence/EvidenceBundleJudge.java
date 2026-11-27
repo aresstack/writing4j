@@ -278,6 +278,20 @@ public final class EvidenceBundleJudge {
      */
     public List<Result> judgeAll(Map<EvidenceJudge.Question, List<Candidate>> work,
                                  final Collection<EvidenceVerdict> known, final int round) {
+        return judgeAll(work, known, round, null);
+    }
+
+    /**
+     * As {@link #judgeAll(Map, Collection, int)}; {@code onEach} hears of every question as soon as it is judged, from
+     * the thread that judged it, so a host can show the progress ({@code null}: nobody).
+     */
+    public List<Result> judgeAll(Map<EvidenceJudge.Question, List<Candidate>> work,
+                                 final Collection<EvidenceVerdict> known, final int round, Runnable onEach) {
+        final Runnable each = onEach == null ? new Runnable() {
+            @Override
+            public void run() {
+            }
+        } : onEach;
         List<Result> out = new ArrayList<Result>();
         if (work.isEmpty()) {
             return out;
@@ -286,7 +300,13 @@ public final class EvidenceBundleJudge {
         List<Future<Result>> running = new ArrayList<Future<Result>>();
         try {
             for (final Map.Entry<EvidenceJudge.Question, List<Candidate>> entry : work.entrySet()) {
-                running.add(pool.submit(() -> judge(entry.getKey(), entry.getValue(), known, round)));
+                running.add(pool.submit(() -> {
+                    try {
+                        return judge(entry.getKey(), entry.getValue(), known, round);
+                    } finally {
+                        each.run();
+                    }
+                }));
             }
             for (Future<Result> result : running) {
                 out.add(result.get());
