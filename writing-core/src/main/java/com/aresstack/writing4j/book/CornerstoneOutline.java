@@ -30,8 +30,9 @@ import java.util.regex.Pattern;
  * the numbers of the cornerstones it rests on. One call for all instead of questions per cornerstone, because those
  * came out by the hundred and many nearly the same (M19: 247); this way every model measured gave no near duplicates.
  * The answer is plain text in the measured form ({@code Kapitel 1: Titel}, {@code - Frage [3, 17]}); all three models
- * kept it. When the cornerstones do not fit the model's context in one call, they go in parts by topic field and the
- * chapters of the parts follow one another; the limit comes from the model's context length, not from a fixed number.
+ * kept it. When the cornerstones do not fit the model's context in one call, they go in parts by topic field, and one
+ * more call merges the chapters of the parts (titles and questions only) into one outline; the limit comes from the
+ * model's context length, not from a fixed number.
  * The reader's ordering hints go along as a non-binding hint. The critical and evaluative questions do not come from
  * here (none of the models asked them); they come from the mission ({@link StockQuestions#draftMission}).
  */
@@ -162,6 +163,7 @@ public final class CornerstoneOutline {
             "^\\s*(?:#+\\s*)?\\**\\s*(?:Kapitel|Chapter)\\s*\\d+\\s*[:.)\\-–]\\s*(.+?)\\s*\\**\\s*$",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern QUESTION = Pattern.compile("^\\s*(?:[-*•]|\\d+[.)])\\s+(.+?)\\s*$");
+    private static final Pattern DIGITS = Pattern.compile("\\d+");
     private static final Pattern NUMBERS = Pattern.compile("\\[([\\d,;\\s]*)]\\s*\\.?\\s*$");
 
     private final MainModelChat chat;
@@ -239,6 +241,9 @@ public final class CornerstoneOutline {
         } finally {
             pool.shutdownNow();
         }
+        if (parts.size() > 1 && chapters.size() > 1) {
+            chapters = merged(chapters, problems);
+        }
         int questions = 0;
         for (Chapter chapter : chapters) {
             questions += chapter.questions.size();
@@ -246,6 +251,134 @@ public final class CornerstoneOutline {
         log.accept("outline: " + chapters.size() + " chapters, " + questions + " questions from "
                 + cornerstones.size() + " cornerstones in " + parts.size() + " part(s)");
         return new Result(chapters, problems);
+    }
+
+    /**
+     * The chapters of all parts as one outline: one more call sees the chapter titles and questions of every part
+     * (without the places, so it fits where the cornerstones did not) and puts chapters on the same topic together in
+     * an order a newcomer can follow. A question the answer leaves out stays, in its own chapter; when the call fails
+     * or does not fit, the parts stay one after another.
+     */
+    List<Chapter> merged(List<Chapter> chapters, List<String> problems) {
+        List<Question> all = new ArrayList<Question>();
+        for (Chapter chapter : chapters) {
+            all.addAll(chapter.questions);
+        }
+        String prompt = mergePrompt(chapters);
+        int context = chat.contextTokens() > 0 ? chat.contextTokens() : options.contextTokens;
+        if (prompt.length() / options.charsPerToken + options.answerTokens > context) {
+            problems.add("parts not merged: the chapters do not fit the context");
+            return chapters;
+        }
+        String problem = "";
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            MainModelChatResult result = chat.complete(Arrays.asList(ChatMessage.user(prompt)), 0.0,
+                    options.answerTokens);
+            if (!result.isOk()) {
+                problem = "model call failed (" + result.getStatus() + "): " + result.getDetail();
+                continue;
+            }
+            List<Chapter> out = parseMerge(result.getText(), chapters, all);
+            if (out.isEmpty()) {
+                problem = "the merge answer has no chapter with questions";
+                continue;
+            }
+            log.accept("outline: " + chapters.size() + " chapters of the parts merged into " + out.size());
+            return out;
+        }
+        problems.add("parts not merged: " + problem);
+        return chapters;
+    }
+
+    String mergePrompt(List<Chapter> chapters) {
+        StringBuilder text = new StringBuilder();
+        String mission = fence.getMission().trim();
+        if (german) {
+            text.append("Du hilfst bei der Vorbereitung eines Sachbuchs.\n\n");
+            text.append("Rahmen des Buches: ").append(mission).append("\n");
+            text.append("Der Leser des Buches kennt das Thema noch nicht.\n\n");
+            text.append("Die Gliederung entstand in Teilen. Unten stehen die Kapitel aller Teile mit ihren "
+                    + "nummerierten Fragen.\n\n");
+            text.append("Aufgabe: Fasse sie zu einer Gliederung zusammen.\n"
+                    + "- Kapitel mit demselben oder einem überlappenden Thema werden ein Kapitel.\n"
+                    + "- Ordne die Kapitel so, dass ein Neuling folgen kann: Was Voraussetzung für anderes ist, "
+                    + "kommt früher.\n"
+                    + "- Gib unter jedem Kapitel in eckigen Klammern die Nummern seiner Fragen an. Jede Nummer "
+                    + "genau einmal.\n\n");
+            text.append("Antworte nur in dieser Form und ohne weitere Erklärung:\n"
+                    + "Kapitel 1: <Titel>\n[1, 4, 9]\nKapitel 2: <Titel>\n[2, 3]\n...\n\nKapitel der Teile:\n");
+        } else {
+            text.append("You help prepare a non-fiction book.\n\n");
+            text.append("Frame of the book: ").append(mission).append("\n");
+            text.append("The reader of the book does not know the subject yet.\n\n");
+            text.append("The outline was made in parts. Below are the chapters of all parts with their numbered "
+                    + "questions.\n\n");
+            text.append("Task: merge them into one outline.\n"
+                    + "- Chapters on the same or an overlapping topic become one chapter.\n"
+                    + "- Order the chapters so a newcomer can follow: what others build on comes first.\n"
+                    + "- Under every chapter, give the numbers of its questions in square brackets. Every number "
+                    + "exactly once.\n\n");
+            text.append("Answer only in this form and without further explanation:\n"
+                    + "Chapter 1: <title>\n[1, 4, 9]\nChapter 2: <title>\n[2, 3]\n...\n\nChapters of the parts:\n");
+        }
+        int number = 0;
+        for (Chapter chapter : chapters) {
+            text.append(chapter.title).append("\n");
+            for (Question question : chapter.questions) {
+                text.append(++number).append(". ").append(question.text.replaceAll("\\s+", " ").trim())
+                        .append("\n");
+            }
+        }
+        return text.toString();
+    }
+
+    /**
+     * The merged chapters; each question once (its first mention counts), numbers outside the list dropped, and a
+     * question the answer left out kept under the title of its chapter at the end.
+     */
+    static List<Chapter> parseMerge(String answer, List<Chapter> before, List<Question> all) {
+        Map<String, List<Question>> out = new LinkedHashMap<String, List<Question>>();
+        Set<Integer> used = new LinkedHashSet<Integer>();
+        String title = null;
+        for (String line : (answer == null ? "" : answer).split("\\R")) {
+            Matcher chapter = CHAPTER.matcher(line);
+            if (chapter.matches()) {
+                title = chapter.group(1).replace("*", "").trim();
+                continue;
+            }
+            if (title == null) {
+                continue;
+            }
+            Matcher number = DIGITS.matcher(line);
+            while (number.find()) {
+                int at = Integer.parseInt(number.group()) - 1;
+                if (at >= 0 && at < all.size() && used.add(at)) {
+                    if (!out.containsKey(title)) {
+                        out.put(title, new ArrayList<Question>());
+                    }
+                    out.get(title).add(all.get(at));
+                }
+            }
+        }
+        if (out.isEmpty()) {
+            return Collections.emptyList();
+        }
+        int at = 0;
+        for (Chapter chapter : before) {
+            for (Question question : chapter.questions) {
+                if (!used.contains(at++)) {
+                    if (!out.containsKey(chapter.title)) {
+                        out.put(chapter.title, new ArrayList<Question>());
+                    }
+                    out.get(chapter.title).add(question);
+                }
+            }
+        }
+        List<Chapter> chapters = new ArrayList<Chapter>();
+        for (Map.Entry<String, List<Question>> chapter : out.entrySet()) {
+            chapters.add(new Chapter(chapter.getKey(), chapter.getValue()));
+        }
+        return chapters;
     }
 
     /** All in one part when the prompt fits; else by topic field, a field too large for one part split further. */

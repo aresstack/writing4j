@@ -77,21 +77,30 @@ public class CornerstoneOutlineTest {
         // the context of the model: room for the prompt with one field, not with all
         int one = outline.prompt(cornerstones(), Arrays.asList(1, 2), null).length() / 3 + 20;
         Recorder sized = new Recorder(one, "Kapitel 1: Tempo\n- Eine Frage? [1]\n- Daneben? [2]\n",
-                "Kapitel 1: Kinder\n- Andere Frage? [2]\n");
+                "Kapitel 1: Kinder\n- Andere Frage? [2]\n", "Kapitel 1: Verkehr\n[3, 1, 3, 7]\n");
         List<List<Integer>> parts = new CornerstoneOutline(sized, FENCE, "de",
                 new CornerstoneOutline.Options(240, 10, 1, 3.0, 1), null).parts(cornerstones(), null);
         assertEquals(Arrays.asList(Collections.singletonList(0), Arrays.asList(1, 2)), parts);
 
         CornerstoneOutline.Result result = new CornerstoneOutline(sized, FENCE, "de",
                 new CornerstoneOutline.Options(240, 10, 1, 3.0, 1), null).outline(cornerstones(), null);
-        assertEquals("one call per part", 2, sized.prompts.size());
-        List<Integer> named = new ArrayList<Integer>();
-        for (CornerstoneOutline.Chapter chapter : result.getChapters()) {
-            for (CornerstoneOutline.Question question : chapter.getQuestions()) {
-                named.addAll(question.getCornerstones());
-            }
-        }
-        assertEquals("numbers of a part map back to the whole list", Arrays.asList(0, 2), named);
+        assertEquals("one call per part and one to merge them", 3, sized.prompts.size());
+        String merge = sized.prompts.get(2);
+        assertTrue(merge, merge.contains("Kapitel der Teile:\nTempo\n1. Eine Frage?\n2. Daneben?\nKinder\n"
+                + "3. Andere Frage?\n"));
+        assertFalse("no places in the merge", merge.contains("Ampeln"));
+        assertEquals(2, result.getChapters().size());
+        CornerstoneOutline.Chapter merged = result.getChapters().get(0);
+        assertEquals("Verkehr", merged.getTitle());
+        assertEquals("each question once, in the order of the answer", 2, merged.getQuestions().size());
+        assertEquals("Andere Frage?", merged.getQuestions().get(0).getText());
+        assertEquals("numbers of a part map back to the whole list", Collections.singletonList(2),
+                merged.getQuestions().get(0).getCornerstones());
+        assertEquals(Collections.singletonList(0), merged.getQuestions().get(1).getCornerstones());
+        CornerstoneOutline.Chapter left = result.getChapters().get(1);
+        assertEquals("a question the merge left out stays under its chapter", "Tempo", left.getTitle());
+        assertEquals("Daneben?", left.getQuestions().get(0).getText());
+        assertTrue(result.getProblems().isEmpty());
     }
 
     @Test

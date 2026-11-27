@@ -968,7 +968,8 @@ public final class BookRun {
             boolean mission = origins.get(k) == Question.Origin.PFLICHT;
             List<String> shared = mission && !semantic ? sharedWords(texts.get(k), prepared.inside) : null;
             Question question = new Question(String.format("F%03d", j + 1), texts.get(k), origins.get(k),
-                    !mission ? topics.get(k) : semantic ? nearest.get(demandedIndex) : topicOf(shared, members),
+                    !mission ? topics.get(k) : semantic ? nearest.get(demandedIndex)
+                            : nearestByWords(texts.get(k), prepared.inside, members),
                     verdicts.get(j));
             if (mission && semantic) {
                 question.vector = questionVectors.get(k);
@@ -1164,8 +1165,16 @@ public final class BookRun {
      * endings), most shared words first (ties in reading order).
      */
     static List<String> sharedWords(String question, List<BasketPassage> passages) {
+        final Map<String, Integer> shared = sharedCounts(question, passages);
+        List<String> ids = new ArrayList<String>(shared.keySet());
+        Collections.sort(ids, (a, b) -> Integer.compare(shared.get(b), shared.get(a)));
+        return ids;
+    }
+
+    /** Per passage that shares a word with the question, how many (in reading order). */
+    private static Map<String, Integer> sharedCounts(String question, List<BasketPassage> passages) {
         Set<String> asked = words(question);
-        final Map<String, Integer> shared = new LinkedHashMap<String, Integer>();
+        Map<String, Integer> shared = new LinkedHashMap<String, Integer>();
         for (BasketPassage passage : passages) {
             Set<String> in = words(passage.heading + " " + passage.text);
             in.retainAll(asked);
@@ -1173,9 +1182,34 @@ public final class BookRun {
                 shared.put(passage.passageId, in.size());
             }
         }
-        List<String> ids = new ArrayList<String>(shared.keySet());
-        Collections.sort(ids, (a, b) -> Integer.compare(shared.get(b), shared.get(a)));
-        return ids;
+        return shared;
+    }
+
+    /**
+     * Without vectors, the chapter whose passages share the most words with the question on average: the counterpart
+     * of the nearest mean vector, so a large chapter does not draw every question by its size alone; {@code ""} when
+     * no chapter shares a word.
+     */
+    static String nearestByWords(String question, List<BasketPassage> passages, Map<String, List<String>> members) {
+        Map<String, Integer> shared = sharedCounts(question, passages);
+        String best = "";
+        double most = 0;
+        for (Map.Entry<String, List<String>> topic : members.entrySet()) {
+            if (topic.getValue().isEmpty()) {
+                continue;
+            }
+            int sum = 0;
+            for (String id : topic.getValue()) {
+                Integer n = shared.get(id);
+                sum += n == null ? 0 : n;
+            }
+            double mean = sum / (double) topic.getValue().size();
+            if (mean > most) {
+                most = mean;
+                best = topic.getKey();
+            }
+        }
+        return best;
     }
 
     private static Set<String> words(String text) {
@@ -1186,24 +1220,6 @@ public final class BookRun {
             }
         }
         return out;
-    }
-
-    /** The cornerstone with the most of the given passages among its own; {@code ""} when none has one. */
-    private static String topicOf(List<String> passages, Map<String, List<String>> members) {
-        String best = "";
-        int most = 0;
-        Set<String> wanted = new LinkedHashSet<String>(passages);
-        for (Map.Entry<String, List<String>> topic : members.entrySet()) {
-            int n = 0;
-            for (String id : topic.getValue()) {
-                n += wanted.contains(id) ? 1 : 0;
-            }
-            if (n > most) {
-                most = n;
-                best = topic.getKey();
-            }
-        }
-        return best;
     }
 
     /** The vectors of the passages, heading path and text as one document each; none without an embedding model. */
@@ -1432,6 +1448,11 @@ public final class BookRun {
         @Override
         public String modelName() {
             return chat.modelName();
+        }
+
+        @Override
+        public int contextTokens() {
+            return chat.contextTokens();
         }
 
         private MainModelChatResult count(MainModelChatResult result) {
