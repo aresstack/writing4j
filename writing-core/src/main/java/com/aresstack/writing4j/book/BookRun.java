@@ -1,5 +1,6 @@
 package com.aresstack.writing4j.book;
 
+import com.aresstack.knowledge4j.run.Pieces;
 import com.aresstack.knowledge4j.basket.OrderingHint;
 import com.aresstack.writing4j.cornerstone.CornerstoneSieve;
 import com.aresstack.writing4j.cornerstone.CornerstoneSurvey;
@@ -148,6 +149,7 @@ public final class BookRun {
         private int placeChars = DEFAULT_PLACE_CHARS;
         private double mergeSimilarity = DEFAULT_MERGE_SIMILARITY;
         private List<String> subjectWords = Collections.emptyList();
+        private Pieces pieces;
 
         /**
          * @param capacity the concurrent calls the research model takes, as the host's model port gives it (at
@@ -226,6 +228,21 @@ public final class BookRun {
         }
 
         /** The words of the subject the anchors are found with; empty to take them from mission and fence. */
+        /**
+         * How the pieces of a stage run (one source profile per source): {@code null} or not set, on a pool of
+         * {@link #getCapacity()} threads in the caller's job; a host may run each piece as a job of its own under the
+         * run's job, so the reader sees which source is being described.
+         */
+        public Settings withPieces(Pieces value) {
+            this.pieces = value;
+            return this;
+        }
+
+        /** How the pieces of a stage run; never {@code null}. */
+        public Pieces getPieces() {
+            return pieces == null ? Pieces.parallel(capacity) : pieces;
+        }
+
         public Settings withSubjectWords(List<String> value) {
             subjectWords = value == null ? Collections.<String>emptyList() : new ArrayList<String>(value);
             return this;
@@ -738,7 +755,7 @@ public final class BookRun {
         }
 
         // 1 source profiles
-        Step profileStep = step(steps, "quellensteckbriefe");
+        Step profileStep = step(steps, SourceRater.STAGE);
         long began = clock.millis();
         List<SourceSample> samples = new ArrayList<SourceSample>();
         for (List<BasketPassage> list : bySource.values()) {
@@ -755,7 +772,7 @@ public final class BookRun {
                 settings.language, settings.rater, log, idea);
         Map<String, SourceRating> profiles = new LinkedHashMap<String, SourceRating>();
         for (SourceRating rating : rater.rateAll(samples, Collections.<String, SourceRating>emptyMap(),
-                counter(report, profileStep.getName(), samples.size()))) {
+                counter(report, profileStep.getName(), samples.size()), settings.getPieces())) {
             profiles.put(rating.getSourceId(), rating);
         }
         report.step(profileStep.getName(), samples.size(), samples.size());

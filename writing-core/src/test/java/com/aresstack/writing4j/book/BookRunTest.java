@@ -173,6 +173,37 @@ public class BookRunTest {
         assertTrue(reports.toString(), reports.contains("schreiben 1/" + count(reports, "schreiben 0/")));
     }
 
+    @Test
+    public void theHostRunsEachSourceProfileAsAPieceOfItsOwn() throws Exception {
+        BasketStock stock;
+        try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {
+            stock = BasketStock.korb(in);
+        }
+        Script script = new Script();
+        final List<String> stages = java.util.Collections.synchronizedList(new ArrayList<String>());
+        final List<String> titles = java.util.Collections.synchronizedList(new ArrayList<String>());
+        com.aresstack.knowledge4j.run.Pieces host = new com.aresstack.knowledge4j.run.Pieces() {
+            @Override
+            public <T, R> List<R> run(String stage, List<T> items, java.util.function.Function<T, String> title,
+                                      java.util.function.Function<T, R> work) {
+                stages.add(stage);
+                List<R> out = new ArrayList<R>();
+                for (T item : items) {
+                    titles.add(title.apply(item));
+                    out.add(work.apply(item));
+                }
+                return out;
+            }
+        };
+        BookRun run = new BookRun(script, script, script, new WordVectors(), settings(stock, 2).withPieces(host),
+                CLOCK, null);
+        BookRun.Preparation prepared = run.prepare(stock.basket, stock, null);
+
+        assertEquals(Arrays.asList("quellensteckbriefe"), stages);
+        assertEquals("one piece per source, named for the job list", 7, titles.size());
+        assertEquals(7, prepared.getProfiles().size());
+    }
+
     private static String count(List<String> reports, String start) {
         for (String report : reports) {
             if (report.startsWith(start)) {

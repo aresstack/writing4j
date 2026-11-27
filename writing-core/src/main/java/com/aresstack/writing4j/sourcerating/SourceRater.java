@@ -1,6 +1,7 @@
 package com.aresstack.writing4j.sourcerating;
 
 import com.aresstack.knowledge4j.model.ThinkingMode;
+import com.aresstack.knowledge4j.run.Pieces;
 import com.aresstack.knowledge4j.scope.Fence;
 import com.aresstack.writing4j.engine.WritingSlots;
 import com.aresstack.knowledge4j.model.role.ModelRole;
@@ -21,10 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -53,6 +50,9 @@ import java.util.regex.Pattern;
  * calls; it is as thread-safe as the injected chat.</p>
  */
 public final class SourceRater {
+
+    /** The stage name the ratings run under in {@link Pieces}. */
+    public static final String STAGE = "quellensteckbriefe";
 
     /** How the rater works; immutable. */
     public static final class Options {
@@ -155,6 +155,16 @@ public final class SourceRater {
         this.fence = fence;
     }
 
+    /** The name of a piece in the host's job list: the source's title, else its address, else its id. */
+    private static String titleOf(SourceSample sample) {
+        String title = sample.getTitle() == null ? "" : sample.getTitle().trim();
+        if (!title.isEmpty()) {
+            return title;
+        }
+        String address = sample.getAddress() == null ? "" : sample.getAddress().trim();
+        return address.isEmpty() ? sample.getSourceId() : address;
+    }
+
     /** One source: at most {@link #ATTEMPTS} calls. */
     public SourceRating rate(SourceSample sample) {
         KnownDomains.Entry suggestion = known.suggest(sample.getHost().isEmpty() ? sample.getAddress()
@@ -220,6 +230,16 @@ public final class SourceRater {
      */
     public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing,
                                       Runnable onEach) {
+        return rateAll(sources, existing, onEach, Pieces.parallel(options.getParallel()));
+    }
+
+    /**
+     * As {@link #rateAll(List, Map, Runnable)}; {@code pieces} runs the group ratings, one piece per group named by
+     * the title of its first source, so a host can run each as a job of its own under the run's job. The stage is
+     * {@link #STAGE}.
+     */
+    public List<SourceRating> rateAll(List<SourceSample> sources, Map<String, SourceRating> existing,
+                                      Runnable onEach, Pieces pieces) {
         final Runnable each = onEach == null ? new Runnable() {
             @Override
             public void run() {
@@ -249,39 +269,27 @@ public final class SourceRater {
         if (!ask.isEmpty()) {
             final AtomicInteger failuresInRow = new AtomicInteger();
             final AtomicReference<String> lastFailure = new AtomicReference<String>("");
-            ExecutorService pool = Executors.newFixedThreadPool(Math.min(options.getParallel(), ask.size()));
-            Map<String, Future<SourceRating>> running = new LinkedHashMap<String, Future<SourceRating>>();
-            try {
-                for (final String group : ask) {
-                    final SourceSample first = sampleOf(groups.get(group));
-                    running.put(group, pool.submit(() -> {
-                        if (failuresInRow.get() >= Options.STOP_AFTER_FAILURES) {
-                            each.run();
-                            return failed(first, known.suggest(first.getHost()), "not asked: the model failed "
-                                    + Options.STOP_AFTER_FAILURES + " groups in a row; last: " + lastFailure.get(),
-                                    Collections.<String>emptyList());
-                        }
-                        SourceRating rating = rate(first);
-                        if (rating.isOk()) {
-                            failuresInRow.set(0);
-                        } else {
-                            lastFailure.set(rating.getProblem());
-                            failuresInRow.incrementAndGet();
-                        }
-                        each.run();
-                        return rating;
-                    }));
+            Pieces run = pieces == null ? Pieces.parallel(options.getParallel()) : pieces;
+            List<SourceRating> rated = run.run(STAGE, ask, group -> titleOf(sampleOf(groups.get(group))), group -> {
+                SourceSample first = sampleOf(groups.get(group));
+                if (failuresInRow.get() >= Options.STOP_AFTER_FAILURES) {
+                    each.run();
+                    return failed(first, known.suggest(first.getHost()), "not asked: the model failed "
+                            + Options.STOP_AFTER_FAILURES + " groups in a row; last: " + lastFailure.get(),
+                            Collections.<String>emptyList());
                 }
-                for (Map.Entry<String, Future<SourceRating>> entry : running.entrySet()) {
-                    byGroup.put(entry.getKey(), entry.getValue().get());
+                SourceRating rating = rate(first);
+                if (rating.isOk()) {
+                    failuresInRow.set(0);
+                } else {
+                    lastFailure.set(rating.getProblem());
+                    failuresInRow.incrementAndGet();
                 }
-            } catch (ExecutionException crashed) {
-                throw new IllegalStateException("source rating crashed", crashed.getCause());
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("source rating interrupted", interrupted);
-            } finally {
-                pool.shutdownNow();
+                each.run();
+                return rating;
+            });
+            for (int i = 0; i < ask.size(); i++) {
+                byGroup.put(ask.get(i), rated.get(i));
             }
         }
         List<SourceRating> out = new ArrayList<SourceRating>(sources.size());
