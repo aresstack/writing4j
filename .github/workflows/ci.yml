@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: aresstack/knowledge4j
-          ref: cf2593e2f2cab3d09ee566fcd9705dea83713c66
+          ref: 4f20975b93c0b558ee7ff197366eba51162bb042
           path: knowledge4j
       - uses: actions/setup-java@v4
         with:
