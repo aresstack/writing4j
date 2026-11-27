@@ -61,6 +61,8 @@ public class LiveBookProbe {
         out.mkdirs();
         BasketStock stock = load(new File(basketFile));
         Ollama chat = new Ollama(ollama, model, context);
+        chat.transcript = new File(out, "aufrufe.txt");
+        chat.transcript.delete();
         TermCandidates.Options defaults = TermCandidates.Options.defaults();
         BookRun.Settings settings = new BookRun.Settings(stock.language, number("BOOK_PROBE_WORDS", 0), 1, null,
                 null, null, null).withCandidates(new TermCandidates.Options(defaults.getMinPassages(),
@@ -76,7 +78,13 @@ public class LiveBookProbe {
                 }
             }
         };
-        BookRun run = new BookRun(chat, chat, chat, null, settings, Clock.systemUTC(), null);
+        BookRun run = new BookRun(chat, chat, chat, null, settings, Clock.systemUTC(),
+                new java.util.function.Consumer<String>() {
+                    @Override
+                    public void accept(String text) {
+                        line(log, began, "  " + text);
+                    }
+                });
         line(log, began, "basket: " + stock.basket.sources().size() + " sources, " + stock.passageCount()
                 + " passages");
         BookRun.Preparation prepared = run.prepare(stock.basket, stock, progress);
@@ -138,6 +146,7 @@ public class LiveBookProbe {
         }
         BasketStock stock = new BasketStock();
         stock.fence = Fence.of(root.get("mission").getAsString());
+        stock.title = root.get("mission").getAsString();
         Map<String, SourceRef> sources = new LinkedHashMap<String, SourceRef>();
         for (JsonElement element : root.getAsJsonArray("passages")) {
             JsonObject p = element.getAsJsonObject();
@@ -160,6 +169,7 @@ public class LiveBookProbe {
         private final int context;
         volatile int calls;
         volatile int failures;
+        File transcript;
 
         Ollama(String base, String model, int context) {
             this.base = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
@@ -223,11 +233,29 @@ public class LiveBookProbe {
                     failures++;
                     return MainModelChatResult.failure(MainModelChatResult.Status.PROVIDER_FAILURE, "http " + status);
                 }
-                return MainModelChatResult.ok(json.getAsJsonObject("message").get("content").getAsString());
+                String content = json.getAsJsonObject("message").get("content").getAsString();
+                note(messages, content);
+                return MainModelChatResult.ok(content);
             } catch (Exception failed) {
                 failures++;
                 return MainModelChatResult.failure(MainModelChatResult.Status.PROVIDER_FAILURE,
                         failed.getClass().getSimpleName());
+            }
+        }
+
+        /** The end of the prompt and the start of the answer of every call, for reading a run afterwards. */
+        private void note(List<ChatMessage> messages, String content) {
+            if (transcript == null) {
+                return;
+            }
+            String prompt = messages.get(messages.size() - 1).getContent();
+            String text = "=== " + calls + "\n... " + prompt.substring(Math.max(0, prompt.length() - 400)) + "\n--- "
+                    + content.substring(0, Math.min(content.length(), 3000)) + "\n";
+            try {
+                Files.write(transcript.toPath(), text.getBytes(StandardCharsets.UTF_8),
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            } catch (java.io.IOException ignored) {
+                // the transcript is a help, not part of the run
             }
         }
 
