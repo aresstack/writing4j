@@ -66,10 +66,11 @@ import java.util.function.Consumer;
  * terms of the others are judged again with the widened fence) and the reader's sorting of the uncertain middle
  * into the mind map, given to {@link #open}; an empty middle asks nothing.</li>
  * <li>{@link #open}: questions from two sides, those the mission demands top down, the evaluative ones among them
- * (Pflichtfragen), and per cornerstone at most a few its places answer (Eckpfeilerfragen); near duplicates merged (the
- * reader's ordering hints put the questions of a term under the term he placed it under); every question checked
- * against mission and fence ({@link StockQuestions}). Questions outside the fence stay in the question list with their
- * reason and are not pursued. A demanded question goes to the cornerstone whose passages lie nearest to it.</li>
+ * (Pflichtfragen, critical ones too), and the outline of the chosen cornerstones in one call: chapters in an order a
+ * newcomer understands, each with its questions naming the cornerstones they rest on ({@link CornerstoneOutline},
+ * M24; the reader's ordering hints go along as a hint); near duplicates merged; every question checked against
+ * mission and fence ({@link StockQuestions}). Questions outside the fence stay in the question list with their
+ * reason and are not pursued. A demanded question goes to the chapter whose passages lie nearest to it.</li>
  * <li>{@link #write}: per question one evidence check ({@link EvidenceBundleJudge}, applicability against the
  * fence) over the places of its cornerstone (those the drafting named first), for a demanded question over the
  * passages nearest to it, as many as one call
@@ -125,7 +126,6 @@ public final class BookRun {
 
     /** The writing settings; every value is a setting of the component it goes to. */
     public static final class Settings {
-        public static final int DEFAULT_QUESTIONS_PER_CORNERSTONE = 2;
         public static final int DEFAULT_PLACES_PER_CORNERSTONE = 5;
         public static final int DEFAULT_PLACE_CHARS = 500;
         public static final double DEFAULT_MERGE_SIMILARITY = 0.90;
@@ -141,7 +141,7 @@ public final class BookRun {
         private CornerstoneSieve.Options sieve = CornerstoneSieve.Options.defaults();
         private FieldCards.Options cards = FieldCards.Options.defaults();
         private Snippets.Options snippets = Snippets.Options.defaults();
-        private int questionsPerCornerstone = DEFAULT_QUESTIONS_PER_CORNERSTONE;
+        private CornerstoneOutline.Options outline = CornerstoneOutline.Options.defaults();
         private int placesPerCornerstone = DEFAULT_PLACES_PER_CORNERSTONE;
         private int placeChars = DEFAULT_PLACE_CHARS;
         private double mergeSimilarity = DEFAULT_MERGE_SIMILARITY;
@@ -165,6 +165,7 @@ public final class BookRun {
             this.writer = (writer == null ? PlanSectionWriter.Options.defaults().withLanguage(this.language) : writer)
                     .withParallel(1).withCheckBundled(true).withAttributionTail(false);
             this.sieve = this.sieve.withParallel(this.capacity);
+            this.outline = this.outline.withParallel(this.capacity);
         }
 
         public static Settings of(String language, int targetWords) {
@@ -195,16 +196,21 @@ public final class BookRun {
         }
 
         /**
-         * The questions per cornerstone: at most {@code questions}, from at most {@code places} places of
-         * {@code chars} characters each.
+         * The evidence of a question from a cornerstone: its {@code places} best places of {@code chars} characters
+         * first (anchors first, one per source), then its other passages.
          */
-        public Settings withCornerstoneQuestions(int questions, int places, int chars) {
-            if (questions < 1 || places < 1 || chars < 100) {
-                throw new IllegalArgumentException("questions >= 1, places >= 1, chars >= 100 expected");
+        public Settings withCornerstonePlaces(int places, int chars) {
+            if (places < 1 || chars < 100) {
+                throw new IllegalArgumentException("places >= 1, chars >= 100 expected");
             }
-            questionsPerCornerstone = questions;
             placesPerCornerstone = places;
             placeChars = chars;
+            return this;
+        }
+
+        /** The outline from the chosen cornerstones (chapters with questions in one call, M24). */
+        public Settings withOutline(CornerstoneOutline.Options value) {
+            outline = (value == null ? CornerstoneOutline.Options.defaults() : value).withParallel(capacity);
             return this;
         }
 
@@ -800,44 +806,54 @@ public final class BookRun {
         Fence idea = survey.getFence().widened(Collections.<String>emptyList(), chosen.getExcludedFields());
         Map<String, BasketPassage> byId = byId(prepared.inside);
 
-        // 4 questions from two sides: demanded by the mission, answered by the places of a cornerstone
+        // 4 questions from two sides: demanded by the mission, and the outline of the chosen cornerstones in one call
+        // (chapters with questions, each naming the cornerstones it rests on; M24)
         final Step questionStep = step(steps, "fragen");
         long began = clock.millis();
-        Map<String, String> parentOf = parents(chosen);
-        Map<String, String> terms = new LinkedHashMap<String, String>();
-        Map<String, List<StockQuestions.Passage>> places = new LinkedHashMap<String, List<StockQuestions.Passage>>();
-        Map<String, List<String>> members = new LinkedHashMap<String, List<String>>();
-        Map<String, String> idOfTerm = new LinkedHashMap<String, String>();
-        int number = 0;
-        for (TermCandidates.Candidate cornerstone : chosen.getCornerstones()) {
-            String id = "eckpfeiler-" + (++number);
-            idOfTerm.put(cornerstone.getTerm().toLowerCase(java.util.Locale.ROOT), id);
-            terms.put(id, cornerstone.getTerm());
-            members.put(id, chosen.passagesOf(cornerstone));
-            List<StockQuestions.Passage> list = new ArrayList<StockQuestions.Passage>();
+        Map<String, TermCandidates.Text> textsById = texts(byId);
+        List<TermCandidates.Candidate> cornerstones = chosen.getCornerstones();
+        List<CornerstoneOutline.Cornerstone> outlined = new ArrayList<CornerstoneOutline.Cornerstone>();
+        List<List<String>> placesOf = new ArrayList<List<String>>();
+        for (TermCandidates.Candidate cornerstone : cornerstones) {
+            List<String> ids = new ArrayList<String>();
+            String first = "";
             for (CornerstoneSieve.Place place : CornerstoneSieve.places(cornerstone, chosen.passagesOf(cornerstone),
-                    texts(byId), settings.placeChars)) {
-                if (list.size() >= settings.placesPerCornerstone) {
+                    textsById, settings.placeChars)) {
+                if (ids.size() >= settings.placesPerCornerstone) {
                     break;
                 }
-                list.add(new StockQuestions.Passage(place.getPassageId(), byId.get(place.getPassageId()).heading,
-                        place.getText()));
+                if (ids.isEmpty()) {
+                    first = CornerstoneSieve.places(cornerstone, Collections.singletonList(place.getPassageId()),
+                            textsById, settings.outline.getPlaceChars()).get(0).getText();
+                }
+                ids.add(place.getPassageId());
             }
-            places.put(id, list);
+            for (String id : chosen.passagesOf(cornerstone)) {
+                if (!ids.contains(id)) {
+                    ids.add(id);
+                }
+            }
+            placesOf.add(ids);
+            outlined.add(new CornerstoneOutline.Cornerstone(cornerstone.getTerm(), fieldOf(survey, cornerstone),
+                    first));
         }
-        report.step(questionStep.getName(), 0, terms.size() + 1);
+        report.step(questionStep.getName(), 0, 2);
         StockQuestions questions = new StockQuestions(new Metered(researchChat, questionStep, switches), idea,
                 settings.language, settings.questions, log);
         StockQuestions.Drafted demanded = questions.draftMission();
-        report.step(questionStep.getName(), 1, terms.size() + 1);
-        List<StockQuestions.Drafted> drafted = questions.draftAll(terms, places, settings.questionsPerCornerstone);
-        report.step(questionStep.getName(), terms.size() + 1, terms.size() + 1);
+        report.step(questionStep.getName(), 1, 2);
+        CornerstoneOutline.Result outline = new CornerstoneOutline(new Metered(researchChat, questionStep, switches),
+                idea, settings.language, settings.outline, log).outline(outlined, chosen.getHints());
+        report.step(questionStep.getName(), 2, 2);
         questionStep.millis = clock.millis() - began;
         if (!demanded.getProblem().isEmpty()) {
             log.accept("book run: no questions of the mission: " + demanded.getProblem());
         }
+        for (String problem : outline.getProblems()) {
+            log.accept("book run: outline: " + problem);
+        }
 
-        // 5 near duplicates merged; the questions of a term the reader placed under another go to that one's topic
+        // 5 the chapters as groups; near duplicates merged
         Step mergeStep = step(steps, "zusammenlegen");
         began = clock.millis();
         List<String> texts = new ArrayList<String>();
@@ -851,24 +867,35 @@ public final class BookRun {
             candidates.add(new ArrayList<String>());
         }
         List<Group> groups = new ArrayList<Group>();
-        for (StockQuestions.Drafted result : drafted) {
-            groups.add(new Group(result.getGroupId(), result.getTitle(), members.get(result.getGroupId()),
-                    result.getProblem()));
-            String parent = parentOf.get(result.getTitle().toLowerCase(java.util.Locale.ROOT));
-            String topic = parent != null && idOfTerm.containsKey(parent) ? idOfTerm.get(parent)
-                    : result.getGroupId();
-            for (int i = 0; i < result.getQuestions().size(); i++) {
-                List<String> ids = new ArrayList<String>(result.getEvidence().get(i));
-                for (String id : members.get(result.getGroupId())) {
-                    if (!ids.contains(id)) {
-                        ids.add(id);
+        Map<String, List<String>> members = new LinkedHashMap<String, List<String>>();
+        int number = 0;
+        for (CornerstoneOutline.Chapter chapter : outline.getChapters()) {
+            String id = "kapitel-" + (++number);
+            List<String> inChapter = new ArrayList<String>();
+            for (CornerstoneOutline.Question question : chapter.getQuestions()) {
+                List<String> ids = new ArrayList<String>();
+                for (int index : question.getCornerstones()) {
+                    for (String passage : placesOf.get(index)) {
+                        if (!ids.contains(passage)) {
+                            ids.add(passage);
+                        }
                     }
                 }
-                texts.add(result.getQuestions().get(i));
+                if (ids.isEmpty()) {
+                    ids.addAll(sharedWords(question.getText(), prepared.inside));
+                }
+                for (String passage : ids) {
+                    if (!inChapter.contains(passage)) {
+                        inChapter.add(passage);
+                    }
+                }
+                texts.add(question.getText());
                 origins.add(Question.Origin.ECKPFEILER);
-                topics.add(topic);
+                topics.add(id);
                 candidates.add(ids);
             }
+            members.put(id, inChapter);
+            groups.add(new Group(id, chapter.getTitle(), inChapter, ""));
         }
         Map<String, EmbeddingPort.EmbeddingVector> vectors = embed(prepared.inside);
         boolean semantic = embeddings != null && !texts.isEmpty();
@@ -948,34 +975,14 @@ public final class BookRun {
                 switches, chosen.getHints());
     }
 
-    /** The term above each term (lower case) by the reader's hints, when that term is a cornerstone itself. */
-    private static Map<String, String> parents(CornerstoneSurvey.Chosen chosen) {
-        Set<String> names = new LinkedHashSet<String>();
-        for (TermCandidates.Candidate cornerstone : chosen.getCornerstones()) {
-            names.add(cornerstone.getTerm().toLowerCase(java.util.Locale.ROOT));
-        }
-        Map<String, String> out = new LinkedHashMap<String, String>();
-        for (OrderingHint hint : chosen.getHints()) {
-            String term = hint.term().toLowerCase(java.util.Locale.ROOT);
-            String parent = hint.parent().toLowerCase(java.util.Locale.ROOT);
-            if (names.contains(term) && names.contains(parent) && !out.containsKey(term)) {
-                out.put(term, parent);
+    /** The name of the field a cornerstone belongs to on the cards; empty when none. */
+    private static String fieldOf(CornerstoneSurvey.Survey survey, TermCandidates.Candidate cornerstone) {
+        for (FieldCards.Field field : survey.getFields()) {
+            if (field.getKeys().contains(cornerstone.getKey())) {
+                return field.getName();
             }
         }
-        // a chain goes to its top, a ring stays where it is
-        Map<String, String> top = new LinkedHashMap<String, String>();
-        for (String term : out.keySet()) {
-            String at = out.get(term);
-            Set<String> path = new LinkedHashSet<String>();
-            path.add(term);
-            while (out.containsKey(at) && path.add(at)) {
-                at = out.get(at);
-            }
-            if (!at.equals(term)) {
-                top.put(term, at);
-            }
-        }
-        return top;
+        return "";
     }
 
     private static Map<String, TermCandidates.Text> texts(Map<String, BasketPassage> byId) {
@@ -1038,7 +1045,7 @@ public final class BookRun {
         progressOf.step(judgeStep.getName(), work.size(), work.size());
         judgeStep.millis = clock.millis() - began;
 
-        // 8 memory and section plan: the cornerstones as topics, the pursued questions under them
+        // 8 memory and section plan: the chapters as topics, the pursued questions under them
         Step planStep = step(steps, "abschnittsplan");
         began = clock.millis();
         ResearchMemory memory = new ResearchMemory();
@@ -1052,7 +1059,7 @@ public final class BookRun {
             if (withQuestions.contains(group.id)) {
                 memory.addTopic(ResearchTopic.found(group.id, group.title.isEmpty() ? group.id : group.title, "",
                         null, researchChat.modelName(), clock.millis()).withFence(ResearchTopic.Fence.INNEN,
-                        "Fragen des Eckpfeilers im Weidezaun", researchChat.modelName(), clock.millis()));
+                        "Fragen des Kapitels im Weidezaun", researchChat.modelName(), clock.millis()));
             }
         }
         for (Question question : opening.questions) {

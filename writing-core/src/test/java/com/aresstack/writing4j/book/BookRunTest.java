@@ -70,9 +70,8 @@ public class BookRunTest {
         assertEquals(Arrays.asList("quellensteckbriefe", "sieb", "fragen", "zusammenlegen", "fragenpruefung",
                 "belegpruefung", "abschnittsplan", "schreiben"), names(result.getSteps()));
         assertEquals(7, result.getSteps().get(0).getCalls());
-        int cornerstones = opening.getGroups().size();
-        assertTrue("the basket has cornerstones", cornerstones > 0);
-        assertEquals("one call for the mission, one per cornerstone", 1 + cornerstones,
+        assertTrue("the outline has chapters", opening.getGroups().size() > 0);
+        assertEquals("one call for the mission, one for the outline of all cornerstones", 2,
                 result.getSteps().get(2).getCalls());
         assertEquals("no model call for merging", 0, result.getSteps().get(3).getCalls());
         assertEquals("all questions in one bundle", 1, result.getSteps().get(4).getCalls());
@@ -232,8 +231,7 @@ public class BookRunTest {
     static final class Script implements MainModelChat {
         private static final Pattern BLOCK = Pattern.compile("\\[(P\\d+)][^\\n]*\\n(?:[^\\n]*\\n)*?\"\"\"\\n(.*?)( …)?"
                 + "\\n\"\"\"", Pattern.DOTALL);
-        private static final Pattern DRAFT_BLOCK = Pattern.compile("\\[\\d+][^\\n]*\\n\"\"\"\\n(.*?)\\n\"\"\"",
-                Pattern.DOTALL);
+        private static final Pattern PLACE = Pattern.compile("(?m)^(\\d+)\\. [^:\\n]*: (.*)$");
         private static final Pattern QUESTION = Pattern.compile("\\[(F\\d+)] ([^\\n]*)");
         private static final Pattern WRITER_PASSAGE = Pattern.compile("\\[(\\d+)] \"\"\"(.*?)\"\"\"", Pattern.DOTALL);
         private static final Pattern SENTENCE_LABEL = Pattern.compile("\\[(S\\d+)] „");
@@ -272,6 +270,9 @@ public class BookRunTest {
         @Override
         public MainModelChatResult complete(List<ChatMessage> messages, double temperature, int maxOutputTokens) {
             calls.incrementAndGet();
+            if (messages.get(0).getContent().contains("Aufgabe: Bilde daraus die Gliederung des Buches.")) {
+                return MainModelChatResult.ok(outline(messages.get(0).getContent()));
+            }
             if (messages.get(0).getContent().startsWith("Du hilfst bei der Vorbereitung eines Sachbuchs")) {
                 Matcher term = TERM.matcher(messages.get(0).getContent());
                 return MainModelChatResult.ok(term.find() && EVERYDAY.contains(term.group(1).trim())
@@ -324,9 +325,6 @@ public class BookRunTest {
                 o.add("felder", fields);
                 return MainModelChatResult.ok(o.toString());
             }
-            if (system.startsWith("Du erschließt einen Wissensbestand")) {
-                return MainModelChatResult.ok(draft(prompt));
-            }
             if (system.startsWith("Du prüfst Fragen eines Sachbuchs")) {
                 return MainModelChatResult.ok(check(prompt));
             }
@@ -365,27 +363,31 @@ public class BookRunTest {
             return o.toString();
         }
 
-        /** Every question whose words stand in a passage of the group, the tempting ones as well. */
-        private static String draft(String prompt) {
-            JsonArray questions = new JsonArray();
-            Matcher block = DRAFT_BLOCK.matcher(prompt);
-            Set<String> asked = new LinkedHashSet<String>();
-            while (block.find()) {
-                String text = block.group(1);
-                for (Map<String, List<String>> map : Arrays.asList(ANSWERS, TEMPTING)) {
-                    for (Map.Entry<String, List<String>> entry : map.entrySet()) {
-                        for (String mark : entry.getValue()) {
-                            if (text.contains(mark) && asked.add(entry.getKey())) {
-                                questions.add(entry.getKey());
-                            }
+        /**
+         * One chapter: every question whose words stand at a cornerstone's place, with its numbers; a careless outline
+         * also asks the drinking water question; the pool question only if a place shows the pool.
+         */
+        private static String outline(String prompt) {
+            StringBuilder out = new StringBuilder("Kapitel 1: Regenwasser im Haus\n");
+            Map<String, List<String>> asked = new LinkedHashMap<String, List<String>>(ANSWERS);
+            asked.put(POOL, TEMPTING.get(POOL));
+            for (Map.Entry<String, List<String>> entry : asked.entrySet()) {
+                List<String> numbers = new ArrayList<String>();
+                Matcher place = PLACE.matcher(prompt);
+                while (place.find()) {
+                    for (String mark : entry.getValue()) {
+                        if (place.group(2).contains(mark) && !numbers.contains(place.group(1))) {
+                            numbers.add(place.group(1));
                         }
                     }
                 }
+                if (entry.getKey().equals(POOL) && numbers.isEmpty()) {
+                    continue;
+                }
+                out.append("- ").append(entry.getKey()).append(" ").append(numbers).append("\n");
             }
-            JsonObject o = new JsonObject();
-            o.addProperty("titel", asked.isEmpty() ? "Sonstiges" : asked.iterator().next());
-            o.add("fragen", questions);
-            return o.toString();
+            out.append("- ").append(DRINKING).append(" [1]\n");
+            return out.toString();
         }
 
         private static String check(String prompt) {

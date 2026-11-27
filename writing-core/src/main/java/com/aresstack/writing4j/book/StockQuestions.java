@@ -24,16 +24,13 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 /**
- * The questions of a book from two sides (Phase 4): the questions the mission itself demands, top down, among
- * them the evaluative ones (Pflichtfragen), and per cornerstone the questions of fact its places answer
- * (Eckpfeilerfragen, measurement M19); then every question checked against the mission and its Weidezaun. A demanded question the basket
+ * The questions the mission itself demands (Phase 4), top down, among them the evaluative and critical ones
+ * (Pflichtfragen; the outline of the cornerstones does not ask them, M24), and every question of the book checked
+ * against the mission and its Weidezaun. A demanded question the basket
  * does not answer stays visible, so a part of the mission missing from the basket is not lost. Only mission and fence
  * are the measure; the concept (the mind map) is not asked and not shown.
  * <ul>
  * <li>{@link #draftMission}: one call with the fence alone, the questions the book must answer by its mission.</li>
- * <li>{@link #draft}: one call per cornerstone with the fence, the term and its places (as many as one context
- * holds); at most the given number of questions, each with the places that answer it, none of the book's structure
- * and none of opinion.</li>
  * <li>{@link #check}: all questions in bundles that fit the context, {@link Options#getParallel()} bundles at a time,
  * each question with INNEN, AUSSEN or UNKLAR and a reason.
  * A question the answer misses is asked once more; a question still without a verdict stays in the book's question
@@ -42,23 +39,6 @@ import java.util.function.Consumer;
  * Every size is a setting; there is no fixed number of cornerstones or calls.
  */
 public final class StockQuestions {
-
-    /** A passage of a group as the model reads it. */
-    public static final class Passage {
-        private final String passageId;
-        private final String heading;
-        private final String text;
-
-        public Passage(String passageId, String heading, String text) {
-            this.passageId = passageId;
-            this.heading = heading == null ? "" : heading.trim();
-            this.text = text == null ? "" : text.trim();
-        }
-
-        public String getPassageId() {
-            return passageId;
-        }
-    }
 
     /** What the drafting of one cornerstone (or of the mission) gave: its name, its questions and their places. */
     public static final class Drafted {
@@ -189,12 +169,6 @@ public final class StockQuestions {
     /** Tokens of the fixed parts of a prompt besides the fence and the material (instructions). */
     private static final int FIXED_PROMPT_TOKENS = 600;
 
-    static final String DRAFT_SYSTEM_DE = "Du erschließt einen Wissensbestand für ein Sachbuch: Du liest die "
-            + "Fundstellen eines Eckpfeilers und sagst, welche Sachfragen des Buchauftrags sie beantworten. Du erfindest "
-            + "nichts. Antworte nur mit JSON.";
-    static final String DRAFT_SYSTEM_EN = "You open up a stock of knowledge for a non-fiction book: you read the places "
-            + "of a cornerstone and say which questions of fact of the book's mission they answer. You invent nothing. "
-            + "Answer only with JSON.";
     static final String MISSION_SYSTEM_DE = "Du planst ein Sachbuch: Du sagst, welche Sachfragen das Buch nach seinem "
             + "Auftrag beantworten muss. Antworte nur mit JSON.";
     static final String MISSION_SYSTEM_EN = "You plan a non-fiction book: you say which questions of fact the book must "
@@ -281,158 +255,6 @@ public final class StockQuestions {
         return text.toString();
     }
 
-    // ------------------------------------------------------------------------------------------------- draft
-
-    /**
-     * Every cornerstone, {@link Options#getParallel()} at a time; one result per cornerstone in the given order.
-     *
-     * @param cornerstones the term of each cornerstone by its id, with its places (anchors first, one per source)
-     */
-    public List<Drafted> draftAll(Map<String, String> cornerstones, final Map<String, List<Passage>> places,
-                                  final int maxQuestions) {
-        List<Drafted> out = new ArrayList<Drafted>();
-        if (cornerstones.isEmpty()) {
-            return out;
-        }
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(options.parallel, cornerstones.size()));
-        List<Future<Drafted>> running = new ArrayList<Future<Drafted>>();
-        try {
-            for (final Map.Entry<String, String> cornerstone : cornerstones.entrySet()) {
-                running.add(pool.submit(() -> draft(cornerstone.getKey(), cornerstone.getValue(),
-                        places.get(cornerstone.getKey()), maxQuestions)));
-            }
-            for (Future<Drafted> result : running) {
-                out.add(result.get());
-            }
-        } catch (ExecutionException crashed) {
-            throw new IllegalStateException("question draft crashed", crashed.getCause());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("question draft interrupted", interrupted);
-        } finally {
-            pool.shutdownNow();
-        }
-        return out;
-    }
-
-    /**
-     * One cornerstone (measurement M19): the term and its places; the model asks at most {@code maxQuestions}
-     * questions of fact the places answer, each with the numbers of the places that answer it, or none. The questions
-     * the mission demands are not shown.
-     */
-    public Drafted draft(String id, String term, List<Passage> places, int maxQuestions) {
-        List<Passage> part = fitting(places == null ? Collections.<Passage>emptyList() : places);
-        if (part.isEmpty()) {
-            return new Drafted(id, term, Collections.<String>emptyList(), Collections.<List<String>>emptyList(),
-                    "no place of the term");
-        }
-        String problem = "";
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            MainModelChatResult result = call(german ? DRAFT_SYSTEM_DE : DRAFT_SYSTEM_EN,
-                    draftPrompt(term, part, maxQuestions), options.draftAnswerTokens, draftSchema());
-            if (!result.isOk()) {
-                problem = "model call failed (" + result.getStatus() + "): " + result.getDetail();
-                continue;
-            }
-            JsonObject answer = object(result.getText());
-            if (answer == null || !answer.has("fragen") || !answer.get("fragen").isJsonArray()) {
-                problem = "the answer is no object with a list \"fragen\"";
-                continue;
-            }
-            List<String> questions = new ArrayList<String>();
-            List<List<String>> evidence = new ArrayList<List<String>>();
-            for (JsonElement entry : answer.getAsJsonArray("fragen")) {
-                String text = entry.isJsonPrimitive() ? clean(entry.getAsString())
-                        : entry.isJsonObject() ? text(entry.getAsJsonObject(), "frage") : "";
-                if (text.isEmpty() || questions.contains(text) || questions.size() >= maxQuestions) {
-                    continue;
-                }
-                List<String> ids = new ArrayList<String>();
-                if (entry.isJsonObject() && entry.getAsJsonObject().has("belege")
-                        && entry.getAsJsonObject().get("belege").isJsonArray()) {
-                    for (JsonElement number : entry.getAsJsonObject().getAsJsonArray("belege")) {
-                        int n = number.isJsonPrimitive() && number.getAsJsonPrimitive().isNumber()
-                                ? number.getAsInt() : -1;
-                        if (n >= 1 && n <= part.size() && !ids.contains(part.get(n - 1).passageId)) {
-                            ids.add(part.get(n - 1).passageId);
-                        }
-                    }
-                }
-                questions.add(text);
-                evidence.add(ids);
-            }
-            log.accept("questions of cornerstone " + term + ": " + questions.size());
-            return new Drafted(id, term, questions, evidence, "");
-        }
-        log.accept("questions of cornerstone " + term + " failed: " + problem);
-        return new Drafted(id, term, Collections.<String>emptyList(), Collections.<List<String>>emptyList(), problem);
-    }
-
-    /** The places that fit one context with the answer, in their order; at least one. */
-    List<Passage> fitting(List<Passage> places) {
-        int budget = (int) ((options.contextTokens - FIXED_PROMPT_TOKENS - options.draftAnswerTokens)
-                * options.charsPerToken) - fence.describe(german, MISSION_CHARS).length();
-        List<Passage> out = new ArrayList<Passage>();
-        int used = 0;
-        for (Passage passage : places) {
-            if (passage.text.isEmpty()) {
-                continue;
-            }
-            int size = block(passage, 0).length();
-            if (!out.isEmpty() && used + size > budget) {
-                break;
-            }
-            out.add(passage);
-            used += size;
-        }
-        return out;
-    }
-
-    String draftPrompt(String term, List<Passage> part, int maxQuestions) {
-        StringBuilder text = new StringBuilder(fence.describe(german, MISSION_CHARS));
-        text.append(german ? "Eckpfeiler des Buchs: " : "Cornerstone of the book: ").append(term).append("\n");
-        text.append(german ? "Fundstellen aus dem Bestand:\n\n" : "Places in the stock:\n\n");
-        for (int i = 0; i < part.size(); i++) {
-            text.append(block(part.get(i), i + 1));
-        }
-        if (german) {
-            text.append("\nWelche Sachfragen zu diesem Eckpfeiler muss das Buch nach seinem Auftrag beantworten, und "
-                    + "welche davon beantworten die Fundstellen?\n"
-                    + "- Höchstens ").append(maxQuestions).append(" Fragen; jede ist ein vollständiger Fragesatz, "
-                    + "den mindestens eine Fundstelle beantwortet, und bindet den Eckpfeiler an den Gegenstand des "
-                    + "Buchauftrags.\n"
-                    + "- Nur Fragen innerhalb von Auftrag und Weidezaun; keine Fragen zum Aufbau des Buchs, keine "
-                    + "Meinungsfragen, keine Frage über eine Quelle statt über die Sache.\n"
-                    + "- Keine Frage, wenn die Fundstellen nichts zum Buchauftrag sagen.\n"
-                    + "Antworte nur mit JSON: \"fragen\", je Frage \"frage\" und \"belege\" (die Nummern der "
-                    + "Fundstellen, die sie beantworten).");
-        } else {
-            text.append("\nWhich questions of fact about this cornerstone must the book answer by its mission, and "
-                    + "which of them do the places answer?\n"
-                    + "- At most ").append(maxQuestions).append(" questions; each is a complete question at least "
-                    + "one place answers, and ties the cornerstone to the subject of the mission.\n"
-                    + "- Only questions within mission and fence; none about the structure of the book, none of "
-                    + "opinion, none about a source instead of the matter.\n"
-                    + "- No question when the places say nothing about the mission.\n"
-                    + "Answer only with JSON: \"fragen\", per question \"frage\" and \"belege\" (the numbers of "
-                    + "the places that answer it).");
-        }
-        return text.toString();
-    }
-
-    private String block(Passage passage, int number) {
-        StringBuilder text = new StringBuilder();
-        text.append('[').append(number).append(']');
-        if (!passage.heading.isEmpty()) {
-            text.append(' ').append(german ? "Überschrift: " : "Heading: ").append(passage.heading);
-        }
-        String body = passage.text.replaceAll("\\s+", " ");
-        boolean cut = body.length() > options.passageChars;
-        text.append("\n\"\"\"\n").append(cut ? Fence.cut(body, options.passageChars) : body)
-                .append("\n\"\"\"\n");
-        return text.toString();
-    }
-
     /** The answer of the mission: a working title and the questions. */
     static String missionSchema() {
         JsonObject string = new JsonObject();
@@ -444,26 +266,6 @@ public final class StockQuestions {
         properties.add("titel", string);
         properties.add("fragen", list);
         return object(properties, "titel", "fragen").toString();
-    }
-
-    /** The answer of a cornerstone: the questions, each with the numbers of its places. */
-    static String draftSchema() {
-        JsonObject string = new JsonObject();
-        string.addProperty("type", "string");
-        JsonObject integer = new JsonObject();
-        integer.addProperty("type", "integer");
-        JsonObject numbers = new JsonObject();
-        numbers.addProperty("type", "array");
-        numbers.add("items", integer);
-        JsonObject question = new JsonObject();
-        question.add("frage", string);
-        question.add("belege", numbers);
-        JsonObject list = new JsonObject();
-        list.addProperty("type", "array");
-        list.add("items", object(question, "frage", "belege"));
-        JsonObject properties = new JsonObject();
-        properties.add("fragen", list);
-        return object(properties, "fragen").toString();
     }
 
     // ------------------------------------------------------------------------------------------------- check

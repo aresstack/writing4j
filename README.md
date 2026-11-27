@@ -27,9 +27,10 @@ of the research steers the book. `BookRun` (module `writing-core`) runs:
 3. the reader's choice, optional and never locked: he selects the terms (the safe ones preselected), a term for one
    field only, and deselects whole fields (exclusions of the Weidezaun); a term not chosen gets no questions of its
    own, but its passages stay as evidence. Without the reader the safe terms go on,
-4. questions from both sides: those the mission demands, the evaluative ones among them, and at most a few per
-   cornerstone from its places; near duplicates merged, the reader's ordering hints put the questions of a term under
-   the term above it; all checked against mission and fence,
+4. questions from both sides: those the mission demands, the evaluative and critical ones among them, and the
+   outline of the chosen cornerstones in one call (chapters in an order a newcomer understands, each question naming
+   the cornerstones it rests on; in parts by field when the model's context is too small; the reader's ordering hints
+   go along as a hint); near duplicates merged; all checked against mission and fence,
 5. evidence per question,
 6. a section plan from the material, the sections written one after another with a writing memory and checked
    sentence by sentence,
