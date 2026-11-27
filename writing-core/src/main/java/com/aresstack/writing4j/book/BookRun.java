@@ -1118,7 +1118,7 @@ public final class BookRun {
         progressOf.step(judgeStep.getName(), 0, work.size());
         List<EvidenceVerdict> verdicts = new ArrayList<EvidenceVerdict>();
         for (EvidenceBundleJudge.Result result : judge.judgeAll(work, Collections.<EvidenceVerdict>emptyList(), 1,
-                counter(progressOf, judgeStep.getName(), work.size()))) {
+                counter(progressOf, judgeStep.getName(), work.size()), settings.getPieces())) {
             verdicts.addAll(result.getVerdicts());
         }
         progressOf.step(judgeStep.getName(), work.size(), work.size());

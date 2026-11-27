@@ -174,7 +174,7 @@ public class BookRunTest {
     }
 
     @Test
-    public void theHostRunsEachSourceProfileAsAPieceOfItsOwn() throws Exception {
+    public void theHostRunsEachSourceProfileAndEachEvidenceCheckAsAPieceOfItsOwn() throws Exception {
         BasketStock stock;
         try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {
             stock = BasketStock.korb(in);
@@ -202,6 +202,10 @@ public class BookRunTest {
         assertEquals(Arrays.asList("quellensteckbriefe"), stages);
         assertEquals("one piece per source, named for the job list", 7, titles.size());
         assertEquals(7, prepared.getProfiles().size());
+
+        run.write(run.open(prepared, (java.util.Map<String, String>) null, null), null);
+        assertEquals("the evidence check runs its questions as pieces too",
+                Arrays.asList("quellensteckbriefe", "belegpruefung"), stages);
     }
 
     private static String count(List<String> reports, String start) {

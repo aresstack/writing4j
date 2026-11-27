@@ -1,5 +1,6 @@
 package com.aresstack.writing4j.evidence;
 
+import com.aresstack.knowledge4j.run.Pieces;
 import com.aresstack.knowledge4j.model.ThinkingMode;
 import com.aresstack.knowledge4j.scope.Fence;
 import com.aresstack.writing4j.memory.EvidenceVerdict;
@@ -25,10 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 /**
@@ -51,6 +48,9 @@ import java.util.function.Consumer;
  * the missing ones; a passage still without a verdict is FEHLER, never KEIN, and is offered again later.</p>
  */
 public final class EvidenceBundleJudge {
+
+    /** The stage name the questions run under in {@link Pieces}. */
+    public static final String STAGE = "belegpruefung";
 
     /** One passage with what the check reads beside its text; immutable. */
     public static final class Candidate {
@@ -287,39 +287,34 @@ public final class EvidenceBundleJudge {
      */
     public List<Result> judgeAll(Map<EvidenceJudge.Question, List<Candidate>> work,
                                  final Collection<EvidenceVerdict> known, final int round, Runnable onEach) {
+        return judgeAll(work, known, round, onEach, Pieces.parallel(options.getParallel()));
+    }
+
+    /**
+     * As {@link #judgeAll(Map, Collection, int, Runnable)}; {@code pieces} runs the questions, one piece per question
+     * named by its text, so a host can run each as a job of its own under the run's job. The stage is {@link #STAGE}.
+     */
+    public List<Result> judgeAll(Map<EvidenceJudge.Question, List<Candidate>> work,
+                                 final Collection<EvidenceVerdict> known, final int round, Runnable onEach,
+                                 Pieces pieces) {
         final Runnable each = onEach == null ? new Runnable() {
             @Override
             public void run() {
             }
         } : onEach;
-        List<Result> out = new ArrayList<Result>();
         if (work.isEmpty()) {
-            return out;
+            return new ArrayList<Result>();
         }
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(options.getParallel(), work.size()));
-        List<Future<Result>> running = new ArrayList<Future<Result>>();
-        try {
-            for (final Map.Entry<EvidenceJudge.Question, List<Candidate>> entry : work.entrySet()) {
-                running.add(pool.submit(() -> {
-                    try {
-                        return judge(entry.getKey(), entry.getValue(), known, round);
-                    } finally {
-                        each.run();
-                    }
-                }));
+        final List<Map.Entry<EvidenceJudge.Question, List<Candidate>>> entries =
+                new ArrayList<Map.Entry<EvidenceJudge.Question, List<Candidate>>>(work.entrySet());
+        Pieces run = pieces == null ? Pieces.parallel(options.getParallel()) : pieces;
+        return new ArrayList<Result>(run.run(STAGE, entries, entry -> entry.getKey().getText(), entry -> {
+            try {
+                return judge(entry.getKey(), entry.getValue(), known, round);
+            } finally {
+                each.run();
             }
-            for (Future<Result> result : running) {
-                out.add(result.get());
-            }
-        } catch (ExecutionException crashed) {
-            throw new IllegalStateException("evidence check crashed", crashed.getCause());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("evidence check interrupted", interrupted);
-        } finally {
-            pool.shutdownNow();
-        }
-        return out;
+        }));
     }
 
     /** One question: its candidates in bundles that fit the context, one call per bundle (plus one repair). */
