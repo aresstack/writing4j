@@ -570,7 +570,9 @@ public final class BookRun {
      * @param researchChat the model of profiles, questions and evidence check
      * @param writerChat   the model of the writer; the same as {@code researchChat} avoids a model switch
      * @param checkChat    the model of the sentence check; {@code null} leaves the sentences unchecked
-     * @param embeddings   the vectors of passages and questions (nearest passages of a demanded question, merging)
+     * @param embeddings   the vectors of passages and questions (nearest passages of a demanded question, merging);
+     *                     {@code null} without an embedding model: shared words choose the passages, and only questions
+     *                     with the same wording are merged
      */
     public BookRun(MainModelChat researchChat, MainModelChat writerChat, MainModelChat checkChat,
                    EmbeddingPort embeddings, Settings settings, Clock clock, Consumer<String> log) {
@@ -584,8 +586,8 @@ public final class BookRun {
     public BookRun(MainModelChat researchChat, MainModelChat writerChat, MainModelChat checkChat,
                    EmbeddingPort embeddings, List<MainModelChat> sieveModels, Settings settings, Clock clock,
                    Consumer<String> log) {
-        if (researchChat == null || writerChat == null || embeddings == null) {
-            throw new IllegalArgumentException("the run needs a research model, a writer model and embeddings");
+        if (researchChat == null || writerChat == null) {
+            throw new IllegalArgumentException("the run needs a research model and a writer model");
         }
         this.researchChat = researchChat;
         this.writerChat = writerChat;
@@ -869,14 +871,15 @@ public final class BookRun {
             }
         }
         Map<String, EmbeddingPort.EmbeddingVector> vectors = embed(prepared.inside);
-        List<EmbeddingPort.EmbeddingVector> questionVectors = texts.isEmpty()
-                ? Collections.<EmbeddingPort.EmbeddingVector>emptyList() : embeddings.embedDocuments(texts);
+        boolean semantic = embeddings != null && !texts.isEmpty();
+        List<EmbeddingPort.EmbeddingVector> questionVectors = semantic ? embeddings.embedDocuments(texts)
+                : Collections.<EmbeddingPort.EmbeddingVector>nCopies(texts.size(), null);
         List<Integer> kept = new ArrayList<Integer>();
         for (int i = 0; i < texts.size(); i++) {
             int same = -1;
             for (int k : kept) {
-                if (texts.get(k).equalsIgnoreCase(texts.get(i))
-                        || VectorMath.cosine(questionVectors.get(k), questionVectors.get(i)) >= settings.mergeSimilarity) {
+                if (texts.get(k).equalsIgnoreCase(texts.get(i)) || semantic
+                        && VectorMath.cosine(questionVectors.get(k), questionVectors.get(i)) >= settings.mergeSimilarity) {
                     same = k;
                     break;
                 }
@@ -897,7 +900,8 @@ public final class BookRun {
                 demandedVectors.add(questionVectors.get(k));
             }
         }
-        List<String> nearest = nearestGroups(demandedVectors, demandedVectors.size(), members, vectors);
+        List<String> nearest = semantic ? nearestGroups(demandedVectors, demandedVectors.size(), members, vectors)
+                : null;
         mergeStep.millis = clock.millis() - began;
         log.accept("book run: " + texts.size() + " questions drafted, " + kept.size() + " after merging");
 
@@ -919,11 +923,15 @@ public final class BookRun {
         for (int j = 0; j < kept.size(); j++) {
             int k = kept.get(j);
             boolean mission = origins.get(k) == Question.Origin.PFLICHT;
+            List<String> shared = mission && !semantic ? sharedWords(texts.get(k), prepared.inside) : null;
             Question question = new Question(String.format("F%03d", j + 1), texts.get(k), origins.get(k),
-                    mission ? nearest.get(demandedIndex) : topics.get(k), verdicts.get(j));
-            if (mission) {
+                    !mission ? topics.get(k) : semantic ? nearest.get(demandedIndex) : topicOf(shared, members),
+                    verdicts.get(j));
+            if (mission && semantic) {
                 question.vector = questionVectors.get(k);
                 demandedIndex++;
+            } else if (mission) {
+                question.candidates.addAll(shared);
             } else {
                 question.candidates.addAll(candidates.get(k));
             }
@@ -1128,10 +1136,57 @@ public final class BookRun {
         return "";
     }
 
-    /** The vectors of the passages, heading path and text as one document each. */
+    /**
+     * Without an embedding model: the passages that share words of five letters or more with the question (cut
+     * endings), most shared words first (ties in reading order).
+     */
+    static List<String> sharedWords(String question, List<BasketPassage> passages) {
+        Set<String> asked = words(question);
+        final Map<String, Integer> shared = new LinkedHashMap<String, Integer>();
+        for (BasketPassage passage : passages) {
+            Set<String> in = words(passage.heading + " " + passage.text);
+            in.retainAll(asked);
+            if (!in.isEmpty()) {
+                shared.put(passage.passageId, in.size());
+            }
+        }
+        List<String> ids = new ArrayList<String>(shared.keySet());
+        Collections.sort(ids, (a, b) -> Integer.compare(shared.get(b), shared.get(a)));
+        return ids;
+    }
+
+    private static Set<String> words(String text) {
+        Set<String> out = new LinkedHashSet<String>();
+        for (String word : text.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{Nd}]+")) {
+            if (word.length() >= 5) {
+                out.add(TermCandidates.stem(word));
+            }
+        }
+        return out;
+    }
+
+    /** The cornerstone with the most of the given passages among its own; {@code ""} when none has one. */
+    private static String topicOf(List<String> passages, Map<String, List<String>> members) {
+        String best = "";
+        int most = 0;
+        Set<String> wanted = new LinkedHashSet<String>(passages);
+        for (Map.Entry<String, List<String>> topic : members.entrySet()) {
+            int n = 0;
+            for (String id : topic.getValue()) {
+                n += wanted.contains(id) ? 1 : 0;
+            }
+            if (n > most) {
+                most = n;
+                best = topic.getKey();
+            }
+        }
+        return best;
+    }
+
+    /** The vectors of the passages, heading path and text as one document each; none without an embedding model. */
     private Map<String, EmbeddingPort.EmbeddingVector> embed(List<BasketPassage> passages) {
         Map<String, EmbeddingPort.EmbeddingVector> out = new LinkedHashMap<String, EmbeddingPort.EmbeddingVector>();
-        if (passages.isEmpty()) {
+        if (passages.isEmpty() || embeddings == null) {
             return out;
         }
         List<String> texts = new ArrayList<String>();

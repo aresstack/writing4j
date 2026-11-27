@@ -408,7 +408,7 @@ public final class TermCandidates {
     }
 
     /** A rough cut of German endings so that singular and plural fall together. */
-    static String stem(String word) {
+    public static String stem(String word) {
         String w = word.toLowerCase(Locale.ROOT);
         for (String ending : new String[]{"en", "er", "es", "e", "n", "s"}) {
             if (w.endsWith(ending) && w.length() - ending.length() >= 4) {

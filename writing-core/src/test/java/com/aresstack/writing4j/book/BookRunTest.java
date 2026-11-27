@@ -170,6 +170,23 @@ public class BookRunTest {
         assertTrue(json.getAsJsonObject("fragenNachUrteil").get("AUSSEN").getAsInt() > 0);
     }
 
+    @Test
+    public void withoutAnEmbeddingModelSharedWordsChooseThePassages() throws Exception {
+        BasketStock stock;
+        try (Reader in = BasketStock.resource("korb-kontrolliert.json")) {
+            stock = BasketStock.korb(in);
+        }
+        Script script = new Script();
+        BookRun.Result result = new BookRun(script, script, script, null, settings(stock, 1), CLOCK, null)
+                .run(stock.basket, stock);
+        int answered = 0;
+        for (BookRun.QuestionLine line : result.getQuestionLines()) {
+            answered += line.getState() == BookRun.QuestionLine.State.BEANTWORTET ? 1 : 0;
+        }
+        assertTrue("questions are answered without vectors: " + answered, answered >= Script.ANSWERS.size() - 1);
+        assertFalse(result.getSections().isEmpty());
+    }
+
     /** The invented basket is small: a term needs two passages from two sources. */
     static final TermCandidates.Options SMALL_BASKET = new TermCandidates.Options(2, 2,
             TermCandidates.Options.DEFAULT_DEPTH, TermCandidates.Options.DEFAULT_UNKNOWN_FLOOR);
