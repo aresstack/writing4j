@@ -7,8 +7,7 @@ structured, cited document: outline planning, evidence assignment, section draft
 quality checks and manuscript assembly.
 
 > **Status:** in development on `main`, not released. Writing4j depends on
-> [Knowledge4j](https://github.com/aresstack/knowledge4j), which is not released either; build both side by side
-> (see *Building*).
+> [Knowledge4j](https://github.com/aresstack/knowledge4j) 0.1.0 from Maven Central.
 
 ## From the basket to the book
 
@@ -19,13 +18,25 @@ nothing else. The fence reaches every step that judges or writes, the section wr
 of the research steers the book. `BookRun` (module `writing-core`) runs:
 
 1. source profiles against the fence; passages outside the fence are set aside before anything else,
-2. clustering of the remaining passages into groups,
-3. questions from both sides: those the mission demands and those the groups bring up, checked against mission and
-   fence,
-4. evidence per question,
-5. a section plan from the material, the sections written one after another with a writing memory and checked
+2. the cornerstones of the book (`CornerstoneSurvey`): candidates without a model, the terms much more frequent in
+   the basket than in the general language (`TermCandidates`, German word list of
+   [wordfreq](https://github.com/rspeer/wordfreq), CC BY-SA 4.0, see `wordfreq-de.NOTICE.txt`); a sieve where every
+   model the host offers votes, with and without the fence and on different places (`CornerstoneSieve`): safe in,
+   safe out and the uncertain middle, with their numbers; the fields of the terms (`FieldCards`) and examples in
+   context for each term (`Snippets`: the sentence with its neighbours, heading and source),
+3. the reader's choice, optional and never locked: he selects the terms (the safe ones preselected), a term for one
+   field only, and deselects whole fields (exclusions of the Weidezaun); a term not chosen gets no questions of its
+   own, but its passages stay as evidence. Without the reader the safe terms go on,
+4. questions from both sides: those the mission demands, the evaluative ones among them, and at most a few per
+   cornerstone from its places; near duplicates merged, the reader's ordering hints put the questions of a term under
+   the term above it; all checked against mission and fence,
+5. evidence per question,
+6. a section plan from the material, the sections written one after another with a writing memory and checked
    sentence by sentence,
-6. the mission report: every question answered, only leads, open, a further search needed, or outside the fence.
+7. the mission report: every question answered, only leads, open, a further search needed, or outside the fence.
+
+`BookRun.run` does it all without the reader; a host with a reader calls `prepare`, shows the survey, and calls
+`open` with the reader's choice (`CornerstoneSurvey.selected`) and `write`.
 
 **Two operating modes, one code.** The host gives the number of concurrent calls its model takes (`capacity`, from
 the model port): 1 for a large model alone on one graphics card, many for a cloud service. Every step but the writing
@@ -34,12 +45,12 @@ runs that many calls at once; the order of the work stays the same, and the sect
 ## Building
 
 ```bash
-git clone https://github.com/aresstack/knowledge4j
 git clone https://github.com/aresstack/writing4j
 cd writing4j && ./gradlew build
 ```
 
-The Composite Build takes Knowledge4j from `../knowledge4j`; another folder is set with `-Pknowledge4j.dir=<folder>`.
+For work on both libraries at once, a checkout of Knowledge4j in `../knowledge4j` replaces the released one
+(Composite Build); another folder is set with `-Pknowledge4j.dir=<folder>`.
 
 ## Design principles
 

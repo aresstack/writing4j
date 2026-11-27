@@ -1,8 +1,12 @@
 package com.aresstack.writing4j.book;
 
-import com.aresstack.writing4j.memory.IdSequence;
-import com.aresstack.writing4j.memory.Passage;
-import com.aresstack.writing4j.memory.TopicProposal;
+import com.aresstack.knowledge4j.basket.OrderingHint;
+import com.aresstack.writing4j.cornerstone.CornerstoneSieve;
+import com.aresstack.writing4j.cornerstone.CornerstoneSurvey;
+import com.aresstack.writing4j.cornerstone.FieldCards;
+import com.aresstack.writing4j.cornerstone.GeneralLanguage;
+import com.aresstack.writing4j.cornerstone.Snippets;
+import com.aresstack.writing4j.cornerstone.TermCandidates;
 import com.aresstack.knowledge4j.basket.BasketReader;
 import com.aresstack.knowledge4j.passage.PassageView;
 import com.aresstack.knowledge4j.source.SourceRef;
@@ -11,7 +15,6 @@ import com.aresstack.knowledge4j.scope.Fence;
 import com.aresstack.writing4j.evidence.EvidenceBundleJudge;
 import com.aresstack.writing4j.evidence.EvidenceJudge;
 import com.aresstack.knowledge4j.model.embedding.EmbeddingPort;
-import com.aresstack.writing4j.cluster.TopicClusterer;
 import com.aresstack.writing4j.cluster.VectorMath;
 import com.aresstack.writing4j.memory.EvidenceVerdict;
 import com.aresstack.writing4j.memory.QuestionEvidence;
@@ -55,16 +58,22 @@ import java.util.function.Consumer;
  * {@link BasketReader}) with the book idea it was collected for (mission and Weidezaun with inclusions and exclusions,
  * {@link SourceBasket#fence()}) and the writing settings; nothing else. The concept of the research is not an input: mission and fence are the only measure.
  * <ol>
- * <li>{@link #open}, opening up the basket: a profile per source against the fence ({@link SourceRater}); the
- * passages of a source outside the fence and of the parts of a mixed source outside it (by the profile's headings)
- * are set aside with their reason, mixed and unclear sources stay; the clustering of the remaining passages
- * ({@link TopicClusterer}); questions from two sides, those the mission demands (Pflichtfragen) and per group those
- * its passages answer (Befundfragen), then every question checked against mission and fence
- * ({@link StockQuestions}). Questions outside the fence stay in the question list with their reason and are not
- * pursued. A demanded question goes to the group whose passages lie nearest to it.</li>
+ * <li>{@link #prepare}: a profile per source against the fence ({@link SourceRater}); the passages of a source
+ * outside the fence and of the parts of a mixed source outside it (by the profile's headings) are set aside with their
+ * reason; then the cornerstones ({@link CornerstoneSurvey}): candidates without a model, the sieve with votes (safe
+ * in, safe out, uncertain) and the fields as cards.</li>
+ * <li>Between, both optional and never locked: {@link #withFields} (the reader drags up the wanted fields, only the
+ * terms of the others are judged again with the widened fence) and the reader's sorting of the uncertain middle
+ * into the mind map, given to {@link #open}; an empty middle asks nothing.</li>
+ * <li>{@link #open}: questions from two sides, those the mission demands top down, the evaluative ones among them
+ * (Pflichtfragen), and per cornerstone at most a few its places answer (Eckpfeilerfragen); near duplicates merged (the
+ * reader's ordering hints put the questions of a term under the term he placed it under); every question checked
+ * against mission and fence ({@link StockQuestions}). Questions outside the fence stay in the question list with their
+ * reason and are not pursued. A demanded question goes to the cornerstone whose passages lie nearest to it.</li>
  * <li>{@link #write}: per question one evidence check ({@link EvidenceBundleJudge}, applicability against the
- * fence) over the passages of its group, for a demanded question over the passages nearest to it, as many as one call
- * of the check holds (the vectors only choose the candidates, the context window how many); the groups as topics, their questions and the verdicts in the research memory;
+ * fence) over the places of its cornerstone (those the drafting named first), for a demanded question over the
+ * passages nearest to it, as many as one call
+ * of the check holds (the vectors only choose the candidates, the context window how many); the cornerstones as topics, their questions and the verdicts in the research memory;
  * the section plan from questions and evidence ({@link SectionPlanner}); the sections in order with the writing
  * memory and the bundled sentence check ({@link PlanSectionWriter}); the mission report ({@link MissionCheck}) and
  * per question where it is answered or why it stays open; a demanded question without evidence in the basket is a
@@ -72,8 +81,9 @@ import java.util.function.Consumer;
  * </ol>
  * Two modes, one code: the host gives the number of concurrent calls its research model takes
  * ({@link Settings} {@code capacity}, from the model port's capacity: 1 for a large model alone on one graphics card,
- * many for a cloud service). With 1 every step runs call after call; with more, profiles, group questions, the
- * question check and the evidence check run that many calls at once. Bundling by the context window holds in both
+ * many for a cloud service). With 1 every step runs call after call; with more, profiles, the sieve, the cornerstone
+ * questions, the question check and the evidence check run that many calls at once. The sieve votes with every model
+ * the host offers. Bundling by the context window holds in both
  * modes. The logical order stays: the sections are written one after another with the writing memory whatever the
  * capacity. Every model call is counted per step: calls, failures, tokens, time and model switches.
  */
@@ -115,27 +125,37 @@ public final class BookRun {
 
     /** The writing settings; every value is a setting of the component it goes to. */
     public static final class Settings {
+        public static final int DEFAULT_QUESTIONS_PER_CORNERSTONE = 2;
+        public static final int DEFAULT_PLACES_PER_CORNERSTONE = 5;
+        public static final int DEFAULT_PLACE_CHARS = 500;
+        public static final double DEFAULT_MERGE_SIMILARITY = 0.90;
+
         private final String language;
         private final int targetWords;
-        private final double groupDistance;
         private final int capacity;
         private final SourceRater.Options rater;
         private final StockQuestions.Options questions;
         private final EvidenceBundleJudge.Options judge;
         private final PlanSectionWriter.Options writer;
+        private TermCandidates.Options candidates = TermCandidates.Options.defaults();
+        private CornerstoneSieve.Options sieve = CornerstoneSieve.Options.defaults();
+        private FieldCards.Options cards = FieldCards.Options.defaults();
+        private Snippets.Options snippets = Snippets.Options.defaults();
+        private int questionsPerCornerstone = DEFAULT_QUESTIONS_PER_CORNERSTONE;
+        private int placesPerCornerstone = DEFAULT_PLACES_PER_CORNERSTONE;
+        private int placeChars = DEFAULT_PLACE_CHARS;
+        private double mergeSimilarity = DEFAULT_MERGE_SIMILARITY;
+        private List<String> subjectWords = Collections.emptyList();
 
         /**
-         * @param groupDistance passages joined at or below this cosine distance form one group (the setting of the
-         *                      topic analysis, {@link TopicClusterer#DEFAULT_TOPIC_DISTANCE})
-         * @param capacity      the concurrent calls the research model takes, as the host's model port gives it (at
-         *                      least 1); it sets the parallelism of every step but the writing
+         * @param capacity the concurrent calls the research model takes, as the host's model port gives it (at
+         *                 least 1); it sets the parallelism of every step but the writing
          */
-        public Settings(String language, int targetWords, double groupDistance, int capacity,
-                        SourceRater.Options rater, StockQuestions.Options questions, EvidenceBundleJudge.Options judge,
+        public Settings(String language, int targetWords, int capacity, SourceRater.Options rater,
+                        StockQuestions.Options questions, EvidenceBundleJudge.Options judge,
                         PlanSectionWriter.Options writer) {
             this.language = language == null || language.trim().isEmpty() ? "de" : language.trim();
             this.targetWords = targetWords;
-            this.groupDistance = groupDistance > 0 ? groupDistance : TopicClusterer.DEFAULT_TOPIC_DISTANCE;
             this.capacity = Math.max(1, capacity);
             SourceRater.Options r = rater == null ? SourceRater.Options.defaults() : rater;
             this.rater = new SourceRater.Options(this.capacity, r.getPassageChars());
@@ -144,11 +164,80 @@ public final class BookRun {
             this.judge = (judge == null ? EvidenceBundleJudge.Options.defaults() : judge).withParallel(this.capacity);
             this.writer = (writer == null ? PlanSectionWriter.Options.defaults().withLanguage(this.language) : writer)
                     .withParallel(1).withCheckBundled(true).withAttributionTail(false);
+            this.sieve = this.sieve.withParallel(this.capacity);
         }
 
         public static Settings of(String language, int targetWords) {
-            return new Settings(language, targetWords, 0, 1, null, null, null, null);
+            return new Settings(language, targetWords, 1, null, null, null, null);
         }
+
+        /** The candidates without a model: minimums, depth and the floor of the general language. */
+        public Settings withCandidates(TermCandidates.Options value) {
+            candidates = value == null ? TermCandidates.Options.defaults() : value;
+            return this;
+        }
+
+        /** The sieve: places, rounds and the vote limits of safe in and safe out (the parallelism stays the capacity). */
+        public Settings withSieve(CornerstoneSieve.Options value) {
+            sieve = (value == null ? CornerstoneSieve.Options.defaults() : value).withParallel(capacity);
+            return this;
+        }
+
+        /** The examples at a term: how many, sentences around, the shortest standing sentence, back references. */
+        public Settings withSnippets(Snippets.Options value) {
+            snippets = value == null ? Snippets.Options.defaults() : value;
+            return this;
+        }
+
+        public Settings withCards(FieldCards.Options value) {
+            cards = value == null ? FieldCards.Options.defaults() : value;
+            return this;
+        }
+
+        /**
+         * The questions per cornerstone: at most {@code questions}, from at most {@code places} places of
+         * {@code chars} characters each.
+         */
+        public Settings withCornerstoneQuestions(int questions, int places, int chars) {
+            if (questions < 1 || places < 1 || chars < 100) {
+                throw new IllegalArgumentException("questions >= 1, places >= 1, chars >= 100 expected");
+            }
+            questionsPerCornerstone = questions;
+            placesPerCornerstone = places;
+            placeChars = chars;
+            return this;
+        }
+
+        /** Two questions at or above this cosine similarity are one question. */
+        public Settings withMergeSimilarity(double value) {
+            if (value <= 0 || value > 1) {
+                throw new IllegalArgumentException("0 < mergeSimilarity <= 1 expected");
+            }
+            mergeSimilarity = value;
+            return this;
+        }
+
+        /** The words of the subject the anchors are found with; empty to take them from mission and fence. */
+        public Settings withSubjectWords(List<String> value) {
+            subjectWords = value == null ? Collections.<String>emptyList() : new ArrayList<String>(value);
+            return this;
+        }
+
+        public String getLanguage() {
+            return language;
+        }
+
+        public int getCapacity() {
+            return capacity;
+        }
+    }
+
+    /** Called with the step, the units done and the units of the step (calls, or terms). */
+    public interface Progress {
+        Progress NONE = (step, done, total) -> {
+        };
+
+        void step(String step, int done, int total);
     }
 
     /** What one step's model calls came to. */
@@ -190,7 +279,7 @@ public final class BookRun {
         }
     }
 
-    /** A group of the clustering with its passages and the questions drafted from it. */
+    /** A cornerstone as a topic of the book: its term, its passages (anchors first) and the questions drafted from it. */
     public static final class Group {
         private final String id;
         private final String title;
@@ -216,7 +305,7 @@ public final class BookRun {
             return passageIds;
         }
 
-        /** Why (a part of) the group got no questions; {@code ""} when the drafting succeeded. */
+        /** Why the cornerstone got no questions; {@code ""} when the drafting succeeded. */
         public String getProblem() {
             return problem;
         }
@@ -224,16 +313,18 @@ public final class BookRun {
 
     /** A question of the book, with its side and its verdict against mission and fence. */
     public static final class Question {
-        /** Where it comes from: the mission demands it, or the passages of a group answer it. */
-        public enum Origin { PFLICHT, BEFUND }
+        /** Where it comes from: the mission demands it, or the places of a cornerstone answer it. */
+        public enum Origin { PFLICHT, ECKPFEILER }
 
         private final String id;
         private final String text;
         private final Origin origin;
         private final String groupId;
         private final StockQuestions.Verdict verdict;
-        /** The vector of a demanded question, to rank its candidates; {@code null} for a question of a group. */
+        /** The vector of a demanded question, to rank its candidates; {@code null} for a question of a cornerstone. */
         EmbeddingPort.EmbeddingVector vector;
+        /** The candidates of a cornerstone question: the places the drafting named, then those of its cornerstone. */
+        final List<String> candidates = new ArrayList<String>();
 
         Question(String id, String text, Origin origin, String groupId, StockQuestions.Verdict verdict) {
             this.id = id;
@@ -255,7 +346,7 @@ public final class BookRun {
             return text;
         }
 
-        /** The group whose passages are its candidates; {@code ""} when the basket has none. */
+        /** The cornerstone (topic) it belongs to; {@code ""} when the basket has none. */
         public String getGroupId() {
             return groupId;
         }
@@ -281,10 +372,13 @@ public final class BookRun {
         private final List<Question> questions;
         private final List<Step> steps;
         private final Switches switches;
+        private final List<OrderingHint> hints;
 
         Opening(Fence fence, List<BasketPassage> passages, Map<String, String> setAside,
-                Map<String, EmbeddingPort.EmbeddingVector> vectors, Map<String, SourceRating> profiles, List<Group> groups, List<Question> questions, List<Step> steps,
-                Switches switches) {
+                Map<String, EmbeddingPort.EmbeddingVector> vectors, Map<String, SourceRating> profiles,
+                List<Group> groups, List<Question> questions, List<Step> steps, Switches switches,
+                List<OrderingHint> hints) {
+            this.hints = Collections.unmodifiableList(new ArrayList<OrderingHint>(hints));
             this.fence = fence;
             this.passages = Collections.unmodifiableList(new ArrayList<BasketPassage>(passages));
             this.setAside = Collections.unmodifiableMap(new LinkedHashMap<String, String>(setAside));
@@ -300,7 +394,7 @@ public final class BookRun {
             return passages;
         }
 
-        /** Passages outside the fence by their source's profile, not clustered: the reason by passage id. */
+        /** Passages outside the fence by their source's profile, no candidates: the reason by passage id. */
         public Map<String, String> getSetAside() {
             return setAside;
         }
@@ -309,8 +403,19 @@ public final class BookRun {
             return profiles;
         }
 
+        /** The cornerstones with their passages, in rank order. */
         public List<Group> getGroups() {
             return groups;
+        }
+
+        /** The fence of the book: the basket's, widened by the fields the reader wanted or left lying. */
+        public Fence getFence() {
+            return fence;
+        }
+
+        /** The reader's order (of Phase 3 and of the sorting), non-binding. */
+        public List<OrderingHint> getHints() {
+            return hints;
         }
 
         public List<Question> getQuestions() {
@@ -456,6 +561,7 @@ public final class BookRun {
     private final MainModelChat writerChat;
     private final MainModelChat checkChat;
     private final EmbeddingPort embeddings;
+    private final List<MainModelChat> sieveModels;
     private final Settings settings;
     private final Clock clock;
     private final Consumer<String> log;
@@ -464,10 +570,20 @@ public final class BookRun {
      * @param researchChat the model of profiles, questions and evidence check
      * @param writerChat   the model of the writer; the same as {@code researchChat} avoids a model switch
      * @param checkChat    the model of the sentence check; {@code null} leaves the sentences unchecked
-     * @param embeddings   the vectors of the passages for the clustering (stored ones or freshly embedded)
+     * @param embeddings   the vectors of passages and questions (nearest passages of a demanded question, merging)
      */
     public BookRun(MainModelChat researchChat, MainModelChat writerChat, MainModelChat checkChat,
                    EmbeddingPort embeddings, Settings settings, Clock clock, Consumer<String> log) {
+        this(researchChat, writerChat, checkChat, embeddings, Collections.<MainModelChat>emptyList(), settings, clock,
+                log);
+    }
+
+    /**
+     * @param sieveModels the models the host offers for the sieve, each one votes; empty for the research model alone
+     */
+    public BookRun(MainModelChat researchChat, MainModelChat writerChat, MainModelChat checkChat,
+                   EmbeddingPort embeddings, List<MainModelChat> sieveModels, Settings settings, Clock clock,
+                   Consumer<String> log) {
         if (researchChat == null || writerChat == null || embeddings == null) {
             throw new IllegalArgumentException("the run needs a research model, a writer model and embeddings");
         }
@@ -475,15 +591,17 @@ public final class BookRun {
         this.writerChat = writerChat;
         this.checkChat = checkChat;
         this.embeddings = embeddings;
+        this.sieveModels = sieveModels == null || sieveModels.isEmpty()
+                ? Collections.singletonList(researchChat) : new ArrayList<MainModelChat>(sieveModels);
         this.settings = settings == null ? Settings.of("de", 0) : settings;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.log = log == null ? line -> {
         } : log;
     }
 
-    /** The whole run: {@link #open}, then {@link #write}. */
+    /** The whole run without the reader: {@link #prepare}, {@link #open} with the safe terms, {@link #write}. */
     public Result run(SourceBasket basket, BasketReader reader) throws IOException {
-        return write(open(basket, reader));
+        return write(open(basket, reader), Progress.NONE);
     }
 
     /** The address of a source for its name and site: the id of a source whose id is a web address, else none. */
@@ -495,11 +613,68 @@ public final class BookRun {
 
     // ------------------------------------------------------------------------------------------------- open
 
-    /**
-     * Opening up the basket: profiles, groups, questions with their verdict against mission and fence; the fence is
-     * the basket's.
-     */
+    /** The basket prepared for the reader: profiles, passages set aside and the cornerstones with their votes. */
+    public static final class Preparation {
+        private final SourceBasket basket;
+        private final List<BasketPassage> passages;
+        private final List<BasketPassage> inside;
+        private final Map<String, String> setAside;
+        private final Map<String, SourceRating> profiles;
+        private final CornerstoneSurvey.Survey survey;
+        private final List<Step> steps;
+        private final Switches switches;
+
+        Preparation(SourceBasket basket, List<BasketPassage> passages, List<BasketPassage> inside,
+                    Map<String, String> setAside, Map<String, SourceRating> profiles, CornerstoneSurvey.Survey survey,
+                    List<Step> steps, Switches switches) {
+            this.basket = basket;
+            this.passages = passages;
+            this.inside = inside;
+            this.setAside = setAside;
+            this.profiles = profiles;
+            this.survey = survey;
+            this.steps = steps;
+            this.switches = switches;
+        }
+
+        /** The cornerstones: three sets with their numbers, the fields as cards, the fence. */
+        public CornerstoneSurvey.Survey getSurvey() {
+            return survey;
+        }
+
+        public Map<String, String> getSetAside() {
+            return Collections.unmodifiableMap(setAside);
+        }
+
+        public Map<String, SourceRating> getProfiles() {
+            return Collections.unmodifiableMap(profiles);
+        }
+
+        public int getPassageCount() {
+            return passages.size();
+        }
+
+        public List<Step> getSteps() {
+            return Collections.unmodifiableList(steps);
+        }
+
+        /** The ordering hints that came with the basket (the reader's order of Phase 3). */
+        public List<OrderingHint> basketHints() {
+            return basket.hints();
+        }
+    }
+
+    /** Without the reader: {@link #prepare}, then {@link #open} with the safe terms. */
     public Opening open(SourceBasket basket, BasketReader reader) {
+        return open(prepare(basket, reader, Progress.NONE), (Map<String, String>) null, Progress.NONE);
+    }
+
+    /**
+     * Profiles, passages outside the fence set aside, cornerstones (candidates, sieve, fields); the fence is the
+     * basket's.
+     */
+    public Preparation prepare(SourceBasket basket, BasketReader reader, Progress progress) {
+        Progress report = progress == null ? Progress.NONE : progress;
         Fence idea = basket.fence();
         Switches switches = new Switches();
         List<Step> steps = new ArrayList<Step>();
@@ -532,16 +707,18 @@ public final class BookRun {
             samples.add(new SourceSample(first.getSourceId(), urlOf(first.source), first.source.title(),
                     first.domain, first.text, headings));
         }
+        report.step(profileStep.getName(), 0, samples.size());
         SourceRater rater = new SourceRater(new Metered(researchChat, profileStep, switches), KnownDomains.none(),
                 settings.language, settings.rater, log, idea);
         Map<String, SourceRating> profiles = new LinkedHashMap<String, SourceRating>();
         for (SourceRating rating : rater.rateAll(samples, Collections.<String, SourceRating>emptyMap())) {
             profiles.put(rating.getSourceId(), rating);
         }
+        report.step(profileStep.getName(), samples.size(), samples.size());
         profileStep.millis = clock.millis() - began;
         log.accept("book run: " + profiles.size() + " source profiles");
 
-        // 2 passages outside the fence set aside by the profile and the heading path; the rest is clustered
+        // 2 passages outside the fence set aside by the profile and the heading path
         Map<String, String> setAside = new LinkedHashMap<String, String>();
         List<BasketPassage> inside = new ArrayList<BasketPassage>();
         for (BasketPassage passage : passages) {
@@ -552,82 +729,204 @@ public final class BookRun {
                 setAside.put(passage.passageId, reason);
             }
         }
-        Step groupStep = step(steps, "gruppierung");
-        began = clock.millis();
-        Map<String, EmbeddingPort.EmbeddingVector> vectors = embed(inside);
-        List<Passage> clustered = new ArrayList<Passage>();
-        for (BasketPassage passage : inside) {
-            clustered.add(new Passage(passage.passageId, passage.getSourceId(), null, passage.heading, passage.text,
-                    vectors.get(passage.passageId).getModelFingerprint()));
-        }
-        List<TopicProposal> proposals = clustered.isEmpty() ? Collections.<TopicProposal>emptyList()
-                : new TopicClusterer(IdSequence.counting(), settings.groupDistance,
-                TopicClusterer.DEFAULT_REPRESENTATIVES).cluster(clustered, vectors);
-        groupStep.millis = clock.millis() - began;
-        log.accept("book run: " + inside.size() + " of " + passages.size() + " passages in " + proposals.size()
-                + " groups, " + setAside.size() + " set aside outside the fence");
 
-        // 3 questions from two sides: demanded by the mission, answered by a group
-        Step questionStep = step(steps, "fragen");
+        // 3 cornerstones: candidates without a model, sieve with votes, fields as cards
+        final Step sieveStep = step(steps, "sieb");
         began = clock.millis();
-        Map<String, BasketPassage> byId = byId(inside);
-        Map<String, List<StockQuestions.Passage>> work = new LinkedHashMap<String, List<StockQuestions.Passage>>();
-        Map<String, List<String>> members = new LinkedHashMap<String, List<String>>();
-        int number = 0;
-        for (TopicProposal proposal : proposals) {
-            String groupId = "gruppe-" + (++number);
-            List<StockQuestions.Passage> list = new ArrayList<StockQuestions.Passage>();
-            for (String id : proposal.getMemberPassageIds()) {
-                BasketPassage passage = byId.get(id);
-                list.add(new StockQuestions.Passage(id, passage.heading, passage.text));
-            }
-            work.put(groupId, list);
-            members.put(groupId, proposal.getMemberPassageIds());
+        List<TermCandidates.Text> texts = new ArrayList<TermCandidates.Text>();
+        for (BasketPassage passage : inside) {
+            texts.add(new TermCandidates.Text(passage.passageId, passage.getSourceId(), passage.text, passage.heading,
+                    passage.source.title()));
         }
+        CornerstoneSurvey.Survey survey = cornerstones(sieveStep, switches).survey(texts, idea, settings.subjectWords,
+                (done, total) -> report.step(sieveStep.getName(), done, total));
+        sieveStep.millis = clock.millis() - began;
+        log.accept("book run: " + inside.size() + " of " + passages.size() + " passages inside, " + setAside.size()
+                + " set aside outside the fence; " + survey.numbers());
+        return new Preparation(basket, passages, inside, setAside, profiles, survey, steps, switches);
+    }
+
+    /**
+     * The reader's answer on the field cards: the fence widened by the wanted fields and the ones left lying, the
+     * terms of the latter judged again. {@code wanted == null}: the reader skipped the cards, nothing changes.
+     */
+    public Preparation withFields(Preparation prepared, Set<String> wanted, Progress progress) {
+        if (wanted == null || prepared.survey.getFields().isEmpty()) {
+            return prepared;
+        }
+        final Progress report = progress == null ? Progress.NONE : progress;
+        List<Step> steps = new ArrayList<Step>(prepared.steps);
+        final Step step = step(steps, "sieb-zaun");
+        long began = clock.millis();
+        CornerstoneSurvey.Survey survey = cornerstones(step, prepared.switches).withFields(prepared.survey, wanted,
+                (done, total) -> report.step(step.getName(), done, total));
+        step.millis = clock.millis() - began;
+        return new Preparation(prepared.basket, prepared.passages, prepared.inside, prepared.setAside,
+                prepared.profiles, survey, steps, prepared.switches);
+    }
+
+    private CornerstoneSurvey cornerstones(Step step, Switches switches) {
+        List<MainModelChat> models = new ArrayList<MainModelChat>();
+        for (MainModelChat model : sieveModels) {
+            models.add(new Metered(model, step, switches));
+        }
+        return new CornerstoneSurvey(new TermCandidates(GeneralLanguage.forLanguage(settings.language),
+                settings.candidates), new CornerstoneSieve(settings.language, settings.sieve, log),
+                new FieldCards(new Metered(researchChat, step, switches), settings.language, settings.cards, log),
+                new Snippets(settings.snippets), models, log);
+    }
+
+    /**
+     * Questions from the cornerstones and from the mission, merged and checked against the fence.
+     *
+     * @param sorted the uncertain terms the reader sorted into the mind map (key to the key or text of the term above
+     *               it, {@code ""} at the top); {@code null} or empty takes the safe terms only
+     */
+    public Opening open(Preparation prepared, Map<String, String> sorted, Progress progress) {
+        return open(prepared, CornerstoneSurvey.chosen(prepared.survey, sorted, prepared.basket.hints()), progress);
+    }
+
+    /**
+     * Questions from the terms the reader chose ({@link CornerstoneSurvey#selected} with the basket's hints from
+     * {@link Preparation#basketHints}, or {@link CornerstoneSurvey#chosen}) and from the mission, merged and checked.
+     */
+    public Opening open(Preparation prepared, CornerstoneSurvey.Chosen chosen, Progress progress) {
+        final Progress report = progress == null ? Progress.NONE : progress;
+        List<Step> steps = new ArrayList<Step>(prepared.steps);
+        Switches switches = prepared.switches;
+        CornerstoneSurvey.Survey survey = prepared.survey;
+        Fence idea = survey.getFence().widened(Collections.<String>emptyList(), chosen.getExcludedFields());
+        Map<String, BasketPassage> byId = byId(prepared.inside);
+
+        // 4 questions from two sides: demanded by the mission, answered by the places of a cornerstone
+        final Step questionStep = step(steps, "fragen");
+        long began = clock.millis();
+        Map<String, String> parentOf = parents(chosen);
+        Map<String, String> terms = new LinkedHashMap<String, String>();
+        Map<String, List<StockQuestions.Passage>> places = new LinkedHashMap<String, List<StockQuestions.Passage>>();
+        Map<String, List<String>> members = new LinkedHashMap<String, List<String>>();
+        Map<String, String> idOfTerm = new LinkedHashMap<String, String>();
+        int number = 0;
+        for (TermCandidates.Candidate cornerstone : chosen.getCornerstones()) {
+            String id = "eckpfeiler-" + (++number);
+            idOfTerm.put(cornerstone.getTerm().toLowerCase(java.util.Locale.ROOT), id);
+            terms.put(id, cornerstone.getTerm());
+            members.put(id, chosen.passagesOf(cornerstone));
+            List<StockQuestions.Passage> list = new ArrayList<StockQuestions.Passage>();
+            for (CornerstoneSieve.Place place : CornerstoneSieve.places(cornerstone, chosen.passagesOf(cornerstone),
+                    texts(byId), settings.placeChars)) {
+                if (list.size() >= settings.placesPerCornerstone) {
+                    break;
+                }
+                list.add(new StockQuestions.Passage(place.getPassageId(), byId.get(place.getPassageId()).heading,
+                        place.getText()));
+            }
+            places.put(id, list);
+        }
+        report.step(questionStep.getName(), 0, terms.size() + 1);
         StockQuestions questions = new StockQuestions(new Metered(researchChat, questionStep, switches), idea,
                 settings.language, settings.questions, log);
-        List<String> drafted = new ArrayList<String>();
-        List<Question.Origin> draftedOrigin = new ArrayList<Question.Origin>();
-        List<String> draftedGroup = new ArrayList<String>();
         StockQuestions.Drafted demanded = questions.draftMission();
-        List<EmbeddingPort.EmbeddingVector> demandedVectors = demanded.getQuestions().isEmpty() || inside.isEmpty()
-                ? Collections.<EmbeddingPort.EmbeddingVector>emptyList()
-                : embeddings.embedDocuments(demanded.getQuestions());
-        List<String> nearest = nearestGroups(demandedVectors, demanded.getQuestions().size(), members, vectors);
-        for (int i = 0; i < demanded.getQuestions().size(); i++) {
-            drafted.add(demanded.getQuestions().get(i));
-            draftedOrigin.add(Question.Origin.PFLICHT);
-            draftedGroup.add(nearest.get(i));
-        }
-        List<Group> groups = new ArrayList<Group>();
-        for (StockQuestions.Drafted result : questions.draftAll(work)) {
-            groups.add(new Group(result.getGroupId(), result.getTitle(), members.get(result.getGroupId()),
-                    result.getProblem()));
-            for (String question : result.getQuestions()) {
-                if (drafted.contains(question)) {
-                    continue; // the same question the mission demands: it stays one question
-                }
-                drafted.add(question);
-                draftedOrigin.add(Question.Origin.BEFUND);
-                draftedGroup.add(result.getGroupId());
-            }
-        }
+        report.step(questionStep.getName(), 1, terms.size() + 1);
+        List<StockQuestions.Drafted> drafted = questions.draftAll(terms, places, settings.questionsPerCornerstone);
+        report.step(questionStep.getName(), terms.size() + 1, terms.size() + 1);
         questionStep.millis = clock.millis() - began;
         if (!demanded.getProblem().isEmpty()) {
             log.accept("book run: no questions of the mission: " + demanded.getProblem());
         }
 
-        Step checkStep = step(steps, "fragenpruefung");
+        // 5 near duplicates merged; the questions of a term the reader placed under another go to that one's topic
+        Step mergeStep = step(steps, "zusammenlegen");
         began = clock.millis();
-        List<StockQuestions.Verdict> verdicts = drafted.isEmpty()
+        List<String> texts = new ArrayList<String>();
+        List<Question.Origin> origins = new ArrayList<Question.Origin>();
+        List<String> topics = new ArrayList<String>();
+        List<List<String>> candidates = new ArrayList<List<String>>();
+        for (String question : demanded.getQuestions()) {
+            texts.add(question);
+            origins.add(Question.Origin.PFLICHT);
+            topics.add("");
+            candidates.add(new ArrayList<String>());
+        }
+        List<Group> groups = new ArrayList<Group>();
+        for (StockQuestions.Drafted result : drafted) {
+            groups.add(new Group(result.getGroupId(), result.getTitle(), members.get(result.getGroupId()),
+                    result.getProblem()));
+            String parent = parentOf.get(result.getTitle().toLowerCase(java.util.Locale.ROOT));
+            String topic = parent != null && idOfTerm.containsKey(parent) ? idOfTerm.get(parent)
+                    : result.getGroupId();
+            for (int i = 0; i < result.getQuestions().size(); i++) {
+                List<String> ids = new ArrayList<String>(result.getEvidence().get(i));
+                for (String id : members.get(result.getGroupId())) {
+                    if (!ids.contains(id)) {
+                        ids.add(id);
+                    }
+                }
+                texts.add(result.getQuestions().get(i));
+                origins.add(Question.Origin.ECKPFEILER);
+                topics.add(topic);
+                candidates.add(ids);
+            }
+        }
+        Map<String, EmbeddingPort.EmbeddingVector> vectors = embed(prepared.inside);
+        List<EmbeddingPort.EmbeddingVector> questionVectors = texts.isEmpty()
+                ? Collections.<EmbeddingPort.EmbeddingVector>emptyList() : embeddings.embedDocuments(texts);
+        List<Integer> kept = new ArrayList<Integer>();
+        for (int i = 0; i < texts.size(); i++) {
+            int same = -1;
+            for (int k : kept) {
+                if (texts.get(k).equalsIgnoreCase(texts.get(i))
+                        || VectorMath.cosine(questionVectors.get(k), questionVectors.get(i)) >= settings.mergeSimilarity) {
+                    same = k;
+                    break;
+                }
+            }
+            if (same < 0) {
+                kept.add(i);
+            } else {
+                for (String id : candidates.get(i)) {
+                    if (!candidates.get(same).contains(id)) {
+                        candidates.get(same).add(id);
+                    }
+                }
+            }
+        }
+        List<EmbeddingPort.EmbeddingVector> demandedVectors = new ArrayList<EmbeddingPort.EmbeddingVector>();
+        for (int k : kept) {
+            if (origins.get(k) == Question.Origin.PFLICHT) {
+                demandedVectors.add(questionVectors.get(k));
+            }
+        }
+        List<String> nearest = nearestGroups(demandedVectors, demandedVectors.size(), members, vectors);
+        mergeStep.millis = clock.millis() - began;
+        log.accept("book run: " + texts.size() + " questions drafted, " + kept.size() + " after merging");
+
+        // 6 every question checked against mission and fence
+        final Step checkStep = step(steps, "fragenpruefung");
+        began = clock.millis();
+        List<String> keptTexts = new ArrayList<String>();
+        for (int k : kept) {
+            keptTexts.add(texts.get(k));
+        }
+        report.step(checkStep.getName(), 0, 1);
+        List<StockQuestions.Verdict> verdicts = keptTexts.isEmpty()
                 ? Collections.<StockQuestions.Verdict>emptyList()
                 : new StockQuestions(new Metered(researchChat, checkStep, switches), idea, settings.language,
-                settings.questions, log).check(drafted);
+                settings.questions, log).check(keptTexts);
+        report.step(checkStep.getName(), 1, 1);
         List<Question> list = new ArrayList<Question>();
-        for (int i = 0; i < drafted.size(); i++) {
-            Question question = new Question(String.format("F%03d", i + 1), drafted.get(i), draftedOrigin.get(i),
-                    draftedGroup.get(i), verdicts.get(i));
-            question.vector = i < demandedVectors.size() ? demandedVectors.get(i) : null;
+        int demandedIndex = 0;
+        for (int j = 0; j < kept.size(); j++) {
+            int k = kept.get(j);
+            boolean mission = origins.get(k) == Question.Origin.PFLICHT;
+            Question question = new Question(String.format("F%03d", j + 1), texts.get(k), origins.get(k),
+                    mission ? nearest.get(demandedIndex) : topics.get(k), verdicts.get(j));
+            if (mission) {
+                question.vector = questionVectors.get(k);
+                demandedIndex++;
+            } else {
+                question.candidates.addAll(candidates.get(k));
+            }
             list.add(question);
         }
         checkStep.millis = clock.millis() - began;
@@ -635,15 +934,61 @@ public final class BookRun {
         for (Question question : list) {
             pursued += question.isPursued() ? 1 : 0;
         }
-        log.accept("book run: " + list.size() + " questions (" + demanded.getQuestions().size()
+        log.accept("book run: " + list.size() + " questions (" + demandedVectors.size()
                 + " demanded by the mission), " + pursued + " pursued");
-        return new Opening(idea, inside, setAside, vectors, profiles, groups, list, steps, switches);
+        return new Opening(idea, prepared.inside, prepared.setAside, vectors, prepared.profiles, groups, list, steps,
+                switches, chosen.getHints());
+    }
+
+    /** The term above each term (lower case) by the reader's hints, when that term is a cornerstone itself. */
+    private static Map<String, String> parents(CornerstoneSurvey.Chosen chosen) {
+        Set<String> names = new LinkedHashSet<String>();
+        for (TermCandidates.Candidate cornerstone : chosen.getCornerstones()) {
+            names.add(cornerstone.getTerm().toLowerCase(java.util.Locale.ROOT));
+        }
+        Map<String, String> out = new LinkedHashMap<String, String>();
+        for (OrderingHint hint : chosen.getHints()) {
+            String term = hint.term().toLowerCase(java.util.Locale.ROOT);
+            String parent = hint.parent().toLowerCase(java.util.Locale.ROOT);
+            if (names.contains(term) && names.contains(parent) && !out.containsKey(term)) {
+                out.put(term, parent);
+            }
+        }
+        // a chain goes to its top, a ring stays where it is
+        Map<String, String> top = new LinkedHashMap<String, String>();
+        for (String term : out.keySet()) {
+            String at = out.get(term);
+            Set<String> path = new LinkedHashSet<String>();
+            path.add(term);
+            while (out.containsKey(at) && path.add(at)) {
+                at = out.get(at);
+            }
+            if (!at.equals(term)) {
+                top.put(term, at);
+            }
+        }
+        return top;
+    }
+
+    private static Map<String, TermCandidates.Text> texts(Map<String, BasketPassage> byId) {
+        Map<String, TermCandidates.Text> out = new LinkedHashMap<String, TermCandidates.Text>();
+        for (BasketPassage passage : byId.values()) {
+            out.put(passage.passageId, new TermCandidates.Text(passage.passageId, passage.getSourceId(),
+                    passage.text));
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------------------------------------- write
 
     /** From the opened basket to the book. */
     public Result write(Opening opening) throws IOException {
+        return write(opening, Progress.NONE);
+    }
+
+    /** From the opened basket to the book, with the progress of each step. */
+    public Result write(Opening opening, Progress progress) throws IOException {
+        final Progress progressOf = progress == null ? Progress.NONE : progress;
         List<Step> steps = new ArrayList<Step>(opening.steps);
         Switches switches = opening.switches;
         Map<String, BasketPassage> byId = byId(opening.passages);
@@ -652,8 +997,8 @@ public final class BookRun {
             groups.put(group.id, group);
         }
 
-        // 4 evidence check per pursued question over the passages of its group
-        Step judgeStep = step(steps, "belegpruefung");
+        // 7 evidence check per pursued question over the places of its cornerstone
+        final Step judgeStep = step(steps, "belegpruefung");
         long began = clock.millis();
         EvidenceBundleJudge judge = new EvidenceBundleJudge(new Metered(researchChat, judgeStep, switches),
                 opening.fence, settings.language, settings.judge, log);
@@ -663,27 +1008,29 @@ public final class BookRun {
             if (!question.isPursued()) {
                 continue;
             }
-            Group group = groups.get(question.groupId);
-            List<String> ids = question.vector == null
-                    ? (group == null ? Collections.<String>emptyList() : group.passageIds)
-                    : nearest(question.vector, opening);
+            List<String> ids = question.vector == null ? question.candidates : nearest(question.vector, opening);
             List<EvidenceBundleJudge.Candidate> candidates = new ArrayList<EvidenceBundleJudge.Candidate>();
             for (String id : ids) {
                 BasketPassage passage = byId.get(id);
+                if (passage == null) {
+                    continue;
+                }
                 candidates.add(new EvidenceBundleJudge.Candidate(new EvidenceJudge.Passage(passage.passageId,
                         passage.getSourceId(), urlOf(passage.source), passage.domain, passage.text),
                         passage.heading, profileLine(opening.profiles.get(passage.getSourceId()))));
             }
             EvidenceJudge.Question asked = new EvidenceJudge.Question(question.id, question.text);
-            work.put(asked, question.vector == null ? candidates : judge.fitting(asked, candidates));
+            work.put(asked, judge.fitting(asked, candidates));
         }
+        progressOf.step(judgeStep.getName(), 0, work.size());
         List<EvidenceVerdict> verdicts = new ArrayList<EvidenceVerdict>();
         for (EvidenceBundleJudge.Result result : judge.judgeAll(work, Collections.<EvidenceVerdict>emptyList(), 1)) {
             verdicts.addAll(result.getVerdicts());
         }
+        progressOf.step(judgeStep.getName(), work.size(), work.size());
         judgeStep.millis = clock.millis() - began;
 
-        // 5 memory and section plan: the groups as topics, the pursued questions under them
+        // 8 memory and section plan: the cornerstones as topics, the pursued questions under them
         Step planStep = step(steps, "abschnittsplan");
         began = clock.millis();
         ResearchMemory memory = new ResearchMemory();
@@ -697,7 +1044,7 @@ public final class BookRun {
             if (withQuestions.contains(group.id)) {
                 memory.addTopic(ResearchTopic.found(group.id, group.title.isEmpty() ? group.id : group.title, "",
                         null, researchChat.modelName(), clock.millis()).withFence(ResearchTopic.Fence.INNEN,
-                        "Fragen der Gruppe im Weidezaun", researchChat.modelName(), clock.millis()));
+                        "Fragen des Eckpfeilers im Weidezaun", researchChat.modelName(), clock.millis()));
             }
         }
         for (Question question : opening.questions) {
@@ -712,8 +1059,9 @@ public final class BookRun {
         SectionPlan plan = new SectionPlanner(memory).targetWords(settings.targetWords).plan(clock.millis());
         planStep.millis = clock.millis() - began;
 
-        // 6 writing in order with the writing memory, bundled sentence check
+        // 9 writing in order with the writing memory, bundled sentence check
         Step writeStep = step(steps, "schreiben");
+        progressOf.step(writeStep.getName(), 0, plan.getSections().size());
         began = clock.millis();
         List<PassageLookup.Passage> lookup = new ArrayList<PassageLookup.Passage>();
         for (BasketPassage passage : opening.passages) {
@@ -725,9 +1073,10 @@ public final class BookRun {
                 checkChat == null ? null : new Metered(checkChat, writeStep, switches), PassageLookup.of(lookup),
                 new SentenceVerdicts(), new WrittenSections(), settings.writer, clock, log, opening.fence);
         List<WrittenSection> sections = writer.writeAll(plan);
+        progressOf.step(writeStep.getName(), plan.getSections().size(), plan.getSections().size());
         writeStep.millis = clock.millis() - began;
 
-        // 7 report
+        // 10 report
         List<BookSection> book = new ArrayList<BookSection>();
         for (WrittenSection section : sections) {
             book.add(section.toBookSection());

@@ -1,6 +1,7 @@
 package com.aresstack.writing4j.book;
 
 import com.aresstack.knowledge4j.model.embedding.EmbeddingPort;
+import com.aresstack.writing4j.cornerstone.TermCandidates;
 import com.aresstack.writing4j.memory.EvidenceVerdict;
 import com.aresstack.writing4j.planwriter.PlanSectionWriter;
 import com.aresstack.writing4j.planwriter.WrittenSection;
@@ -36,8 +37,8 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Phase 4 as a whole on the invented controlled basket with a scripted model and word vectors: passages outside the
- * fence by their source's profile are set aside before the clustering, questions come from the mission and from the
- * groups and are checked against mission and fence, questions outside are kept with their reason and not pursued, a
+ * fence by their source's profile are set aside before the cornerstones are found, questions come from the mission and
+ * from the cornerstones, near duplicates are one question, and all are checked against mission and fence, questions outside are kept with their reason and not pursued, a
  * demanded question the basket does not answer is a gap for a further search, passages outside the fence are neither
  * evidence nor cited. No concept goes in.
  */
@@ -56,8 +57,7 @@ public class BookRunTest {
             stock = BasketStock.korb(in);
         }
         Script script = new Script();
-        BookRun.Settings settings = new BookRun.Settings("de", stock.targetWords, 0, 1, null, null, null,
-                PlanSectionWriter.Options.defaults().withTopUp(false));
+        BookRun.Settings settings = settings(stock, 1);
 
         BookRun.Result result = new BookRun(script, script, script, new WordVectors(), settings, CLOCK, null)
                 .run(stock.basket, stock);
@@ -67,19 +67,24 @@ public class BookRunTest {
         assertEquals("the pool part of the mixed source and the two sources outside are set aside",
                 Arrays.asList("p08", "p10", "p13"), new ArrayList<String>(opening.getSetAside().keySet()));
         assertEquals(11, opening.getPassages().size());
-        assertEquals(Arrays.asList("quellensteckbriefe", "gruppierung", "fragen", "fragenpruefung", "belegpruefung",
-                "abschnittsplan", "schreiben"), names(result.getSteps()));
+        assertEquals(Arrays.asList("quellensteckbriefe", "sieb", "fragen", "zusammenlegen", "fragenpruefung",
+                "belegpruefung", "abschnittsplan", "schreiben"), names(result.getSteps()));
         assertEquals(7, result.getSteps().get(0).getCalls());
-        assertEquals("no model call for the clustering", 0, result.getSteps().get(1).getCalls());
-        assertEquals("one call for the mission, one per group", 1 + opening.getGroups().size(),
+        int cornerstones = opening.getGroups().size();
+        assertTrue("the basket has cornerstones", cornerstones > 0);
+        assertEquals("one call for the mission, one per cornerstone", 1 + cornerstones,
                 result.getSteps().get(2).getCalls());
-        assertEquals("all questions in one bundle", 1, result.getSteps().get(3).getCalls());
+        assertEquals("no model call for merging", 0, result.getSteps().get(3).getCalls());
+        assertEquals("all questions in one bundle", 1, result.getSteps().get(4).getCalls());
         assertEquals(0, result.getModelSwitches());
-        Set<String> grouped = new LinkedHashSet<String>();
         for (BookRun.Group group : opening.getGroups()) {
-            grouped.addAll(group.getPassageIds());
+            assertFalse(group.getTitle(), Script.EVERYDAY.contains(group.getTitle()));
+            assertFalse(group.getTitle(), group.getPassageIds().isEmpty());
+            for (String id : group.getPassageIds()) {
+                assertFalse("a passage set aside is no place of a cornerstone",
+                        opening.getSetAside().containsKey(id));
+            }
         }
-        assertEquals("every passage inside is in a group", 11, grouped.size());
 
         Set<String> found = new LinkedHashSet<String>();
         Set<String> demanded = new LinkedHashSet<String>();
@@ -89,8 +94,8 @@ public class BookRunTest {
         }
         assertTrue(demanded.toString(), demanded.containsAll(Script.ANSWERS.keySet()));
         assertTrue("a question both sides ask is one question", java.util.Collections.disjoint(found, demanded));
-        assertTrue("the question outside is kept", found.contains(Script.DRINKING));
-        assertFalse("the pool part was not clustered", found.contains(Script.POOL));
+        assertTrue("the question outside is kept: " + found, found.contains(Script.DRINKING));
+        assertFalse("the pool part set aside asks nothing", found.contains(Script.POOL));
         assertTrue(demanded.toString(), demanded.contains(Script.FUNDING));
 
         for (EvidenceVerdict verdict : result.getVerdicts()) {
@@ -142,8 +147,7 @@ public class BookRunTest {
         int[] capacities = {1, 6};
         for (int i = 0; i < 2; i++) {
             Script script = new Script();
-            BookRun.Settings settings = new BookRun.Settings("de", stock.targetWords, 0, capacities[i], null, null,
-                    null, PlanSectionWriter.Options.defaults().withTopUp(false));
+            BookRun.Settings settings = settings(stock, capacities[i]);
             books[i] = new BookRun(script, script, script, new WordVectors(), settings, CLOCK, null)
                     .run(stock.basket, stock).book();
         }
@@ -158,12 +162,21 @@ public class BookRunTest {
         }
         Script script = new Script();
         BookRun.Opening opening = new BookRun(script, script, null, new WordVectors(),
-                BookRun.Settings.of("de", 0), CLOCK, null).open(stock.basket, stock);
+                BookRun.Settings.of("de", 0).withCandidates(SMALL_BASKET), CLOCK, null).open(stock.basket, stock);
 
-        assertEquals(4, opening.getSteps().size());
+        assertEquals("profiles, sieve, questions, merging, question check", 5, opening.getSteps().size());
         assertFalse(opening.getQuestions().isEmpty());
         JsonObject json = stock.writeOpening(opening, scratch.newFolder("fragen"), new JsonObject());
         assertTrue(json.getAsJsonObject("fragenNachUrteil").get("AUSSEN").getAsInt() > 0);
+    }
+
+    /** The invented basket is small: a term needs two passages from two sources. */
+    static final TermCandidates.Options SMALL_BASKET = new TermCandidates.Options(2, 2,
+            TermCandidates.Options.DEFAULT_DEPTH, TermCandidates.Options.DEFAULT_UNKNOWN_FLOOR);
+
+    static BookRun.Settings settings(BasketStock stock, int capacity) {
+        return new BookRun.Settings("de", stock.targetWords, capacity, null, null, null,
+                PlanSectionWriter.Options.defaults().withTopUp(false)).withCandidates(SMALL_BASKET);
     }
 
     private static List<String> names(List<BookRun.Step> steps) {
@@ -234,9 +247,19 @@ public class BookRunTest {
 
         final AtomicInteger calls = new AtomicInteger();
 
+        /** Terms the scripted sieve calls everyday words; every other term is a cornerstone. */
+        static final Set<String> EVERYDAY = new LinkedHashSet<String>(Arrays.asList("Anlage", "Haus", "Wasser"));
+        private static final Pattern TERM = Pattern.compile("\nBegriff: ([^\n]*)\n");
+        private static final Pattern NUMBERED = Pattern.compile("(?m)^(\\d+)\\. ");
+
         @Override
         public MainModelChatResult complete(List<ChatMessage> messages, double temperature, int maxOutputTokens) {
             calls.incrementAndGet();
+            if (messages.get(0).getContent().startsWith("Du hilfst bei der Vorbereitung eines Sachbuchs")) {
+                Matcher term = TERM.matcher(messages.get(0).getContent());
+                return MainModelChatResult.ok(term.find() && EVERYDAY.contains(term.group(1).trim())
+                        ? "allgemeinwort" : "Rolle: eckpfeiler");
+            }
             if (messages.get(0).getContent().startsWith("You write one sentence of a non-fiction book again")) {
                 return MainModelChatResult.failure(MainModelChatResult.Status.INVALID_RESPONSE, "no rewrite");
             }
@@ -267,6 +290,21 @@ public class BookRunTest {
                 JsonObject o = new JsonObject();
                 o.addProperty("titel", "Regenwasser im Haus");
                 o.add("fragen", questions);
+                return MainModelChatResult.ok(o.toString());
+            }
+            if (system.startsWith("Du ordnest die Begriffe")) {
+                JsonArray numbers = new JsonArray();
+                Matcher numbered = NUMBERED.matcher(prompt);
+                while (numbered.find()) {
+                    numbers.add(Integer.parseInt(numbered.group(1)));
+                }
+                JsonObject field = new JsonObject();
+                field.addProperty("name", "Regenwasser im Haus");
+                field.add("begriffe", numbers);
+                JsonArray fields = new JsonArray();
+                fields.add(field);
+                JsonObject o = new JsonObject();
+                o.add("felder", fields);
                 return MainModelChatResult.ok(o.toString());
             }
             if (system.startsWith("Du erschließt einen Wissensbestand")) {

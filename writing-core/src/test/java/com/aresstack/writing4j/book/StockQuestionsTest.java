@@ -16,7 +16,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-/** The questions from mission and groups and their check against mission and fence. Made-up texts (city traffic). */
+/** The questions from mission and cornerstones and their check against mission and fence. Made-up texts (city traffic). */
 public class StockQuestionsTest {
 
     private static final Fence FENCE = new Fence("Ein Sachbuch für Stadtplaner über Verkehrssicherheit "
@@ -24,40 +24,50 @@ public class StockQuestionsTest {
             Collections.singletonList("Autobahnen"), "Deutschland", "");
 
     @Test
-    public void theDraftOfAGroupShowsFenceAndPassagesAndNoConcept() {
-        Answers chat = new Answers("{\"titel\":\"Tempo 30\",\"fragen\":[\"Wie wirkt Tempo 30 auf Unfälle?\","
-                + "\" Wie wirkt Tempo 30 auf Unfälle? \",\"\"]}");
-        StockQuestions.Drafted drafted = new StockQuestions(chat, FENCE, "de", null, null).draft("gruppe-1",
-                Arrays.asList(new StockQuestions.Passage("p1", "Bericht > Unfälle", "Nach Tempo 30 sank die Zahl "
-                        + "schwerer Unfälle."), new StockQuestions.Passage("p2", "", "")));
+    public void theDraftOfACornerstoneShowsFenceTermAndPlacesAndNoConcept() {
+        Answers chat = new Answers("{\"fragen\":[{\"frage\":\"Wie wirkt Tempo 30 auf Unfälle?\",\"belege\":[1, 7]},"
+                + "{\"frage\":\" Wie wirkt Tempo 30 auf Unfälle? \",\"belege\":[]},{\"frage\":\"\",\"belege\":[]},"
+                + "{\"frage\":\"Wer ordnet Tempo 30 an?\",\"belege\":[1]},"
+                + "{\"frage\":\"Eine dritte Frage?\",\"belege\":[1]}]}");
+        StockQuestions.Drafted drafted = new StockQuestions(chat, FENCE, "de", null, null).draft("eckpfeiler-1",
+                "Tempo 30", Arrays.asList(new StockQuestions.Passage("p1", "Bericht > Unfälle", "Nach Tempo 30 sank "
+                        + "die Zahl schwerer Unfälle."), new StockQuestions.Passage("p2", "", "")), 2);
 
         assertEquals("Tempo 30", drafted.getTitle());
-        assertEquals("the same question once, none empty", Collections.singletonList("Wie wirkt Tempo 30 auf "
-                + "Unfälle?"), drafted.getQuestions());
+        assertEquals("the same question once, none empty, at most two", Arrays.asList("Wie wirkt Tempo 30 auf "
+                + "Unfälle?", "Wer ordnet Tempo 30 an?"), drafted.getQuestions());
+        assertEquals("only places that were shown", Collections.singletonList("p1"), drafted.getEvidence().get(0));
         String prompt = chat.prompts.get(0);
         assertTrue(prompt, prompt.startsWith("Buchauftrag:\nEin Sachbuch für Stadtplaner"));
         assertTrue(prompt, prompt.contains("Ausgeschlossen:\n- Autobahnen"));
+        assertTrue(prompt, prompt.contains("Eckpfeiler des Buchs: Tempo 30\n"));
+        assertTrue(prompt, prompt.contains("Höchstens 2 Fragen"));
         assertTrue(prompt, prompt.contains("[1] Überschrift: Bericht > Unfälle\n\"\"\"\nNach Tempo 30 sank"));
         assertFalse("an empty passage is not shown", prompt.contains("[2]"));
         assertFalse("no concept", prompt.contains("Karte") || prompt.contains("Mindmap"));
     }
 
     @Test
-    public void aGroupLargerThanTheContextIsAskedInParts() {
+    public void theQuestionsOfACornerstoneAreNamedStringsAsWell() {
+        Answers chat = new Answers("{\"fragen\":[\"Wie wirkt Tempo 30 auf Unfälle?\"]}");
+        StockQuestions.Drafted drafted = new StockQuestions(chat, FENCE, "de", null, null).draft("eckpfeiler-1",
+                "Tempo 30", Collections.singletonList(new StockQuestions.Passage("p1", "", "Tempo 30 wirkt.")), 2);
+        assertEquals(Collections.singletonList("Wie wirkt Tempo 30 auf Unfälle?"), drafted.getQuestions());
+        assertTrue(drafted.getEvidence().get(0).isEmpty());
+    }
+
+    @Test
+    public void theCornerstoneShowsAsManyPlacesAsTheContextHolds() {
         StockQuestions questions = new StockQuestions(new Answers(), FENCE, "de",
                 StockQuestions.Options.defaults().withContextTokens(3000), null);
         List<StockQuestions.Passage> passages = new ArrayList<StockQuestions.Passage>();
         for (int i = 0; i < 12; i++) {
             passages.add(new StockQuestions.Passage("p" + i, "", repeat("Ein langer Satz über den Verkehr. ", 40)));
         }
-        List<List<StockQuestions.Passage>> parts = questions.parts(passages);
-        assertTrue(parts.size() > 1);
-        int total = 0;
-        for (List<StockQuestions.Passage> part : parts) {
-            assertFalse(part.isEmpty());
-            total += part.size();
-        }
-        assertEquals("every passage in a part", 12, total);
+        List<StockQuestions.Passage> shown = questions.fitting(passages);
+        assertFalse(shown.isEmpty());
+        assertTrue(shown.size() < 12);
+        assertEquals("p0", shown.get(0).getPassageId());
     }
 
     @Test

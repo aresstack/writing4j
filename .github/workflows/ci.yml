@@ -11,15 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Knowledge4j comes from Maven Central (knowledge4jVersion in build.gradle).
       - uses: actions/checkout@v4
         with:
           path: writing4j
-      # Knowledge4j is not released yet: a fixed commit next to it, joined by the Composite Build.
-      - uses: actions/checkout@v4
-        with:
-          repository: aresstack/knowledge4j
-          ref: 4f20975b93c0b558ee7ff197366eba51162bb042
-          path: knowledge4j
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
